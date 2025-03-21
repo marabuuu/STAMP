@@ -88,6 +88,7 @@ def test_train_deploy_integration(
         patient_label="patient",
         ground_truth_label="ground-truth",
         filename_label="slide_path",
+        bag_size=None,
         accelerator="gpu" if torch.cuda.is_available() else "cpu",
         num_workers=min(os.cpu_count() or 1, 16),
     )

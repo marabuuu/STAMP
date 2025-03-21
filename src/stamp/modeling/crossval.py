@@ -193,6 +193,7 @@ def categorical_crossval_(
                 },
                 num_workers=num_workers,
                 accelerator=accelerator,
+                bag_size=val_bag_size,
             )
 
             _to_prediction_df(

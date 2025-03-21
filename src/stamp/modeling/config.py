@@ -62,3 +62,5 @@ class DeploymentConfig(BaseModel):
 
     num_workers: int = min(os.cpu_count() or 1, 16)
     accelerator: str = "gpu" if torch.cuda.is_available() else "cpu"
+
+    bag_size: int | None = None
