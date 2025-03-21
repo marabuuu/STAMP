@@ -52,6 +52,7 @@ def categorical_crossval_(
     n_splits: int,
     # Dataset and -loader parameters
     bag_size: int,
+    val_bag_size: int | None,
     num_workers: int,
     # Training paramenters
     batch_size: int,
@@ -144,6 +145,7 @@ def categorical_crossval_(
                 feature_dir=feature_dir,
                 ground_truth_label=ground_truth_label,
                 bag_size=bag_size,
+                val_bag_size=val_bag_size,
                 num_workers=num_workers,
                 batch_size=batch_size,
                 patient_to_data={

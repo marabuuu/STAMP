@@ -51,6 +51,7 @@ def test_crossval_integration(
         categories=categories,
         # Dataset and -loader parameters
         bag_size=max_tiles_per_slide // 2,
+        val_bag_size=None,
         num_workers=min(os.cpu_count() or 1, 7),
         # Training paramenters
         batch_size=8,

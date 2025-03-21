@@ -28,6 +28,7 @@ class TrainConfig(BaseModel):
 
     # Dataset and -loader parameters
     bag_size: int = 512
+    val_bag_size: int | None = None
     num_workers: int = min(os.cpu_count() or 1, 16)
 
     # Training paramenters

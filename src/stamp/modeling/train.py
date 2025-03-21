@@ -52,6 +52,7 @@ def train_categorical_model_(
     categories: Sequence[Category] | None,
     # Dataset and -loader parameters
     bag_size: int,
+    val_bag_size: int | None,  # None means use all the patient data
     num_workers: int,
     # Training paramenters
     batch_size: int,
@@ -118,6 +119,7 @@ def train_categorical_model_(
         patient_to_data=patient_to_data,
         categories=categories,
         bag_size=bag_size,
+        val_bag_size=val_bag_size,
         batch_size=batch_size,
         num_workers=num_workers,
         ground_truth_label=ground_truth_label,
@@ -197,6 +199,7 @@ def setup_model_for_training(
     patient_to_data: Mapping[PatientId, PatientData[GroundTruth]],
     categories: Sequence[Category] | None,
     bag_size: int,
+    val_bag_size: int | None,
     batch_size: int,
     num_workers: int,
     train_transform: Callable[[torch.Tensor], torch.Tensor] | None,
@@ -244,7 +247,7 @@ def setup_model_for_training(
     del categories  # Let's not accidentally reuse the original categories
     valid_dl, _ = dataloader_from_patient_data(
         patient_data=[patient_to_data[patient] for patient in valid_patients],
-        bag_size=None,  # Use all the patient data for validation
+        bag_size=val_bag_size,  # None means use all the patient data
         categories=train_categories,
         batch_size=1,
         shuffle=False,

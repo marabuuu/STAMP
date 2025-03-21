@@ -98,6 +98,7 @@ def _run_cli(args: argparse.Namespace) -> None:
                 categories=config.training.categories,
                 # Dataset and -loader parameters
                 bag_size=config.training.bag_size,
+                val_bag_size=config.training.val_bag_size,
                 num_workers=config.training.num_workers,
                 # Training paramenters
                 batch_size=config.training.batch_size,
@@ -156,6 +157,7 @@ def _run_cli(args: argparse.Namespace) -> None:
                 n_splits=config.crossval.n_splits,
                 # Dataset and -loader parameters
                 bag_size=config.crossval.bag_size,
+                val_bag_size=config.crossval.val_bag_size,
                 num_workers=config.crossval.num_workers,
                 # Crossval paramenters
                 batch_size=config.crossval.batch_size,

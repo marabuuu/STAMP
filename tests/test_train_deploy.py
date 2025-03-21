@@ -67,6 +67,7 @@ def test_train_deploy_integration(
         categories=categories,
         # Dataset and -loader parameters
         bag_size=500,
+        val_bag_size=None,
         num_workers=min(os.cpu_count() or 1, 16),
         # Training paramenters
         batch_size=8,
