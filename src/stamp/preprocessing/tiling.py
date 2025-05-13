@@ -86,8 +86,6 @@ def tiles_with_cache(
     tile_size_px: TilePixels,
     max_supertile_size_slide_px: SlidePixels,
     max_workers: int,
-    brightness_cutoff: int | None,
-    canny_cutoff: float | None,
     default_slide_mpp: SlideMPP | None,
 ) -> Iterator[_Tile[Microns]]:
     """Iterates over the tiles in a WSI, using or saving a cached version if applicable"""
@@ -100,8 +98,6 @@ def tiles_with_cache(
             tile_size_px=tile_size_px,
             max_supertile_size_slide_px=max_supertile_size_slide_px,
             max_workers=max_workers,
-            brightness_cutoff=brightness_cutoff,
-            canny_cutoff=canny_cutoff,
             default_slide_mpp=default_slide_mpp,
         )
         return
@@ -111,7 +107,6 @@ def tiles_with_cache(
         "tile_size_um": tile_size_um,
         "tile_size_px": tile_size_px,
         "max_supertile_size_slide_px": max_supertile_size_slide_px,
-        "brightness_cutoff": brightness_cutoff,
         "code_sha256": _CODE_HASH,
         "tile_ext": cache_tiles_ext,
     }
@@ -149,8 +144,6 @@ def tiles_with_cache(
                     tile_size_px=tile_size_px,
                     max_supertile_size_slide_px=max_supertile_size_slide_px,
                     max_workers=max_workers,
-                    brightness_cutoff=brightness_cutoff,
-                    canny_cutoff=canny_cutoff,
                     default_slide_mpp=default_slide_mpp,
                 ):
                     with zip.open(
@@ -178,8 +171,6 @@ def _tiles_with_tissue(
     tile_size_px: TilePixels,
     max_supertile_size_slide_px: SlidePixels,
     max_workers: int,
-    brightness_cutoff: int | None,
-    canny_cutoff: float | None,
     default_slide_mpp: SlideMPP | None,
 ) -> Iterator[_Tile[Microns]]:
     """Yields all tiels from a WSI which (probably) show tissue"""
@@ -189,11 +180,9 @@ def _tiles_with_tissue(
         tile_size_px=tile_size_px,
         max_supertile_size_slide_px=max_supertile_size_slide_px,
         max_workers=max_workers,
-        brightness_cutoff=brightness_cutoff,
         default_slide_mpp=default_slide_mpp,
     ):
-        if canny_cutoff is None or _has_enough_texture(tile.image, cutoff=canny_cutoff):
-            yield tile
+        yield tile
 
 
 def _tiles(
@@ -203,7 +192,6 @@ def _tiles(
     tile_size_px: TilePixels,
     max_supertile_size_slide_px: SlidePixels,
     max_workers: int,
-    brightness_cutoff: int | None,
     default_slide_mpp: SlideMPP | None,
 ) -> Iterator[_Tile[Microns]]:
     """Yields tiles, excluding background.
@@ -220,7 +208,6 @@ def _tiles(
         tile_size_px=tile_size_px,
         max_supertile_size_slide_px=max_supertile_size_slide_px,
         max_workers=max_workers,
-        brightness_cutoff=brightness_cutoff,
         default_slide_mpp=default_slide_mpp,
     ):
         assert supertile.size[0] == supertile.size[1], "supertile needs to be square"
@@ -253,7 +240,6 @@ def _tiles(
 def _foreground_coords(
     slide: openslide.AbstractSlide,
     tile_size_slide_px: SlidePixels,
-    brightness_cutoff: int | None,
 ) -> Iterator[_XYCoords[SlidePixels]]:
     """Yields coordinates of tiles which aren't too bright and thus probably not background"""
     supertile_thumb_size = np.ceil(
@@ -265,19 +251,11 @@ def _foreground_coords(
         .resize(tuple(supertile_thumb_size))
         .convert("I")
     )
-    # `brightness_cutoff is None` includes all tiles
-    is_foreground = (
-        thumb_grayscale < brightness_cutoff
-        if brightness_cutoff is not None
-        else cast(npt.NDArray[np.bool_], np.full_like(thumb_grayscale, True))
-    )
+
 
     for y_slide_px in range(0, slide.dimensions[1], tile_size_slide_px):
         for x_slide_px in range(0, slide.dimensions[0], tile_size_slide_px):
-            if is_foreground[
-                y_slide_px // tile_size_slide_px, x_slide_px // tile_size_slide_px
-            ]:
-                yield _XYCoords(SlidePixels(x_slide_px), SlidePixels(y_slide_px))
+            yield _XYCoords(SlidePixels(x_slide_px), SlidePixels(y_slide_px))
 
 
 def _has_enough_texture(tile: Image.Image, cutoff: float) -> bool:
@@ -301,7 +279,6 @@ def _supertiles(
     tile_size_px: TilePixels,
     max_supertile_size_slide_px: SlidePixels,
     max_workers: int,
-    brightness_cutoff: int | None,
     default_slide_mpp: SlideMPP | None,
 ) -> Iterator[_Tile[Microns]]:
     slide_mpp = cast(SlideMPP, get_slide_mpp_(slide, default_mpp=default_slide_mpp))
@@ -322,7 +299,6 @@ def _supertiles(
         for coords_slide_px in _foreground_coords(
             slide=slide,
             tile_size_slide_px=supertile_size_slide_px,
-            brightness_cutoff=brightness_cutoff,
         ):
             future = executor.submit(
                 lambda x_slide_px, y_slide_px: _Tile(
@@ -364,9 +340,6 @@ class _TilerParams(TypedDict):
     tile_size_px: TilePixels
     """Length of each tile in pixels"""
     max_supertile_size_slide_px: SlidePixels
-
-    brightness_cutoff: int | None
-    """Tiles with an average brightness larger than this get rejected"""
 
     code_sha256: str
     """The hash of this file at the time of extraction"""

@@ -82,8 +82,6 @@ class _TileDataset(IterableDataset):
         tile_size_px: TilePixels,
         max_supertile_size_slide_px: SlidePixels,
         max_workers: int,
-        brightness_cutoff: int | None,
-        canny_cutoff: float | None,
         default_slide_mpp: SlideMPP | None,
     ) -> None:
         self.slide_path = slide_path
@@ -94,8 +92,6 @@ class _TileDataset(IterableDataset):
         self.tile_size_px = tile_size_px
         self.max_supertile_size_slide_px = max_supertile_size_slide_px
         self.max_workers = max_workers
-        self.brightness_cutoff = brightness_cutoff
-        self.canny_cutoff = canny_cutoff
         self.default_slide_mpp = default_slide_mpp
 
         # Already check if we can extract the MPP here.
@@ -120,8 +116,6 @@ class _TileDataset(IterableDataset):
                 tile_size_px=self.tile_size_px,
                 max_supertile_size_slide_px=self.max_supertile_size_slide_px,
                 max_workers=self.max_workers,
-                brightness_cutoff=self.brightness_cutoff,
-                canny_cutoff=self.canny_cutoff,
                 default_slide_mpp=self.default_slide_mpp,
             )
         )
@@ -139,8 +133,6 @@ def extract_(
     max_workers: int,
     device: DeviceLikeType,
     default_slide_mpp: SlideMPP | None,
-    brightness_cutoff: int | None,
-    canny_cutoff: float | None,
     generate_hash: bool,
 ) -> None:
     """
@@ -270,8 +262,6 @@ def extract_(
                 tile_size_px=tile_size_px,
                 max_supertile_size_slide_px=SlidePixels(2**10),
                 max_workers=max_workers,
-                brightness_cutoff=brightness_cutoff,
-                canny_cutoff=canny_cutoff,
                 default_slide_mpp=default_slide_mpp,
             )
             # Parallelism is implemented in the dataset iterator already, so one worker is enough!
