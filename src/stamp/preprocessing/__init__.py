@@ -83,6 +83,7 @@ class _TileDataset(IterableDataset):
         max_supertile_size_slide_px: SlidePixels,
         max_workers: int,
         default_slide_mpp: SlideMPP | None,
+        min_fg_ratio: float = 0.1,
     ) -> None:
         self.slide_path = slide_path
         self.cache_dir = cache_dir
@@ -93,7 +94,8 @@ class _TileDataset(IterableDataset):
         self.max_supertile_size_slide_px = max_supertile_size_slide_px
         self.max_workers = max_workers
         self.default_slide_mpp = default_slide_mpp
-
+        self.min_fg_ratio = min_fg_ratio
+        
         # Already check if we can extract the MPP here.
         # We don't want to kill our dataloader later,
         # because that leads to _a lot_ of error messages which are difficult to read
@@ -117,6 +119,7 @@ class _TileDataset(IterableDataset):
                 max_supertile_size_slide_px=self.max_supertile_size_slide_px,
                 max_workers=self.max_workers,
                 default_slide_mpp=self.default_slide_mpp,
+                min_fg_ratio=self.min_fg_ratio,
             )
         )
 

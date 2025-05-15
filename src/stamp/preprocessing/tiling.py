@@ -87,6 +87,7 @@ def tiles_with_cache(
     max_supertile_size_slide_px: SlidePixels,
     max_workers: int,
     default_slide_mpp: SlideMPP | None,
+    min_fg_ratio: float = 0.1, #means at least 10% of the tile is tissue
 ) -> Iterator[_Tile[Microns]]:
     """Iterates over the tiles in a WSI, using or saving a cached version if applicable"""
 
@@ -99,6 +100,7 @@ def tiles_with_cache(
             max_supertile_size_slide_px=max_supertile_size_slide_px,
             max_workers=max_workers,
             default_slide_mpp=default_slide_mpp,
+            min_fg_ratio=min_fg_ratio,
         )
         return
 
@@ -107,6 +109,7 @@ def tiles_with_cache(
         "tile_size_um": tile_size_um,
         "tile_size_px": tile_size_px,
         "max_supertile_size_slide_px": max_supertile_size_slide_px,
+        "min_fg_ratio": min_fg_ratio,
         "code_sha256": _CODE_HASH,
         "tile_ext": cache_tiles_ext,
     }
@@ -172,6 +175,7 @@ def _tiles_with_tissue(
     max_supertile_size_slide_px: SlidePixels,
     max_workers: int,
     default_slide_mpp: SlideMPP | None,
+    min_fg_ratio: float = 0.1, #means at least 10% of the tile is tissue
 ) -> Iterator[_Tile[Microns]]:
     """Yields all tiels from a WSI which (probably) show tissue"""
     for tile in _tiles(
@@ -182,7 +186,8 @@ def _tiles_with_tissue(
         max_workers=max_workers,
         default_slide_mpp=default_slide_mpp,
     ):
-        yield tile
+        if _is_foreground_tile(tile.image, min_fg_ratio):
+            yield tile
 
 
 def _tiles(
@@ -271,6 +276,17 @@ def _has_enough_texture(tile: Image.Image, cutoff: float) -> bool:
     # we deem it to have enough texture
     return bool(edge_score >= cutoff)
 
+def _is_foreground_tile(tile: Image.Image, min_fg_ratio: float = 0.1) -> bool:
+    """
+    Returns True if the tile contains enough foreground (tissue) pixels.
+    Uses Otsu's thresholding to separate foreground from background.
+    min_fg_ratio: minimum ratio of foreground pixels required to keep the tile.
+    """
+    tile_gray = np.array(tile.convert("L"))
+    # Otsu's thresholding
+    _, mask = cv2.threshold(tile_gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    fg_ratio = np.count_nonzero(mask) / mask.size
+    return fg_ratio >= min_fg_ratio
 
 def _supertiles(
     slide: openslide.AbstractSlide,
@@ -340,7 +356,8 @@ class _TilerParams(TypedDict):
     tile_size_px: TilePixels
     """Length of each tile in pixels"""
     max_supertile_size_slide_px: SlidePixels
-
+    min_fg_ratio: float 
+    """Minimum ratio of foreground pixels required to keep the tile"""
     code_sha256: str
     """The hash of this file at the time of extraction"""
     # Including this ensures that,
