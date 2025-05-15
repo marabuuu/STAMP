@@ -70,6 +70,11 @@ def _get_preprocessing_code_hash() -> str:
             hasher.update(fp.read())
     return hasher.hexdigest()
 
+def to_fake_rgb(image: Image.Image) -> Image.Image:
+    """Convert a grayscale image to fake RGB by duplicating the channel."""
+    if image.mode != "L":
+        image = image.convert("L")
+    return Image.merge("RGB", (image, image, image))
 
 class _TileDataset(IterableDataset):
     def __init__(
@@ -109,7 +114,7 @@ class _TileDataset(IterableDataset):
 
     def __iter__(self) -> Iterator[tuple[Tensor, Microns, Microns]]:
         return (
-            (self.transform(tile.image), tile.coordinates.x, tile.coordinates.y)
+            (self.transform(to_fake_rgb(tile.image)), tile.coordinates.x, tile.coordinates.y)
             for tile in tiles_with_cache(
                 self.slide_path,
                 cache_dir=self.cache_dir,
