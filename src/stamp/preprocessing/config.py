@@ -42,15 +42,3 @@ class PreprocessingConfig(BaseModel, arbitrary_types_allowed=True):
 
     default_slide_mpp: SlideMPP | None = None
     """MPP of the slide to use if none can be inferred from the WSI"""
-
-    # Background rejection
-    brightness_cutoff: int | None = Field(240, gt=0, lt=255)
-    """Any tile brighter than this will be discarded as probable background.
-    If set to `None`, the brightness-based background rejection is disabled.
-    """
-
-    canny_cutoff: float | None = Field(0.02, gt=0.0, lt=1.0)
-    """Any tile with a lower ratio of pixels classified as "edges" than this
-    will be rejected.
-    If set to `None`, brightness-based rejection is disabled.
-    """
