@@ -2,6 +2,7 @@ import argparse
 import logging
 import shutil
 import sys
+import time 
 from pathlib import Path
 
 import yaml
@@ -61,6 +62,7 @@ def _run_cli(args: argparse.Namespace) -> None:
                 "using the following configuration:\n"
                 f"{yaml.dump(config.preprocessing.model_dump(mode='json'))}"
             )
+            start = time.time()  # <-- Start timing, REMOVE LATER
             extract_(
                 output_dir=config.preprocessing.output_dir,
                 wsi_dir=config.preprocessing.wsi_dir,
@@ -71,11 +73,11 @@ def _run_cli(args: argparse.Namespace) -> None:
                 max_workers=config.preprocessing.max_workers,
                 device=config.preprocessing.device,
                 default_slide_mpp=config.preprocessing.default_slide_mpp,
-                brightness_cutoff=config.preprocessing.brightness_cutoff,
-                canny_cutoff=config.preprocessing.canny_cutoff,
                 cache_tiles_ext=config.preprocessing.cache_tiles_ext,
                 generate_hash=config.preprocessing.generate_hash,
             )
+            end = time.time()  # <-- End timing, REMOVE LATER
+            print(f"Preprocessing took {end - start:.2f} seconds")
 
         case "train":
             from stamp.modeling.train import train_categorical_model_
