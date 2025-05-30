@@ -3,7 +3,7 @@ In parts from https://github.com/lucidrains/vit-pytorch/blob/main/vit_pytorch/vi
 """
 
 from collections.abc import Iterable
-from typing import assert_never, cast
+from typing import assert_never, cast, Any
 
 import torch
 from beartype import beartype
@@ -198,7 +198,7 @@ class VisionTransformer(nn.Module):
         *,
         coords: Float[Tensor, "batch tile 2"],
         mask: Bool[Tensor, "batch tile"] | None,
-    ) -> Float[Tensor, "batch logit"]:
+    ) -> tuple[Tensor, Any]: 
         batch_size, _n_tiles, _n_features = bags.shape
 
         # Map input sequence to latent space of TransMIL
@@ -239,11 +239,12 @@ class VisionTransformer(nn.Module):
                     alibi_mask=alibi_mask,
                 )
         print("Input to MarkerAttention:", bags.shape)
-        bags = self.marker_attention(bags) 
+        bags, marker_attn = self.marker_attention(bags)
         print(bags.shape)
 
         # Only take class token
         bags = bags[:, 0]
 
+        logits = self.mlp_head(bags)
 
-        return self.mlp_head(bags)
+        return logits, marker_attn

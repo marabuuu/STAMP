@@ -43,7 +43,7 @@ def _gradcam_per_category(
                         mask=torch.zeros(
                             1, len(bags), dtype=torch.bool, device=bags.device
                         ),
-                    ),
+                    )[0],
                     dim=1,
                 ).squeeze(0)
             )(feats)
@@ -161,15 +161,38 @@ def heatmaps_(
         coords_tile_slide_px = torch.round(coords_um / slide_mpp).long()
 
         # Score for the entire slide
-        slide_score = (
-            model.vision_transformer(
-                bags=feats.unsqueeze(0),
-                coords=coords_um.unsqueeze(0),
-                mask=torch.zeros(1, len(feats), dtype=torch.bool, device=device),
-            )
-            .squeeze(0)
-            .softmax(0)
-        )
+        logits, marker_attn = model.vision_transformer(
+            bags=feats.unsqueeze(0),
+            coords=coords_um.unsqueeze(0),
+            mask=torch.zeros(1, len(feats), dtype=torch.bool, device=device),
+        )   
+        slide_score = logits.squeeze(0).softmax(0)
+
+        # Visualize marker attention
+        marker_attn = marker_attn.squeeze(0)  # (marker, n_tiles) or (n_tiles, marker)
+        if marker_attn.shape[1] == feats.shape[0]:
+            marker_attn = marker_attn.transpose(0, 1)  # (n_tiles, marker)
+
+        for marker_idx in range(marker_attn.shape[1]):
+            marker_heat = marker_attn[:, marker_idx]  # (n_tiles,)
+            marker_heat_2d = _vals_to_im(marker_heat.unsqueeze(-1), coords_norm).squeeze(-1).cpu().numpy()
+            plt.figure()
+            plt.imshow(marker_heat_2d, cmap="hot")
+            plt.title(f"Marker {marker_idx} attention")
+            plt.colorbar()
+            plt.savefig(slide_output_dir / f"marker{marker_idx}_attention_{h5_path.stem}.png")
+            plt.close()
+
+        most_attended_marker = marker_attn.argmax(dim=1)  # (n_tiles,)
+        most_attended_marker = most_attended_marker.float().unsqueeze(-1)
+        most_attended_marker_2d = _vals_to_im(most_attended_marker, coords_norm).squeeze(-1).cpu().numpy()
+
+        plt.figure()
+        plt.imshow(most_attended_marker_2d, cmap="tab20")
+        plt.title("Most attended marker per patch")
+        plt.colorbar(ticks=range(marker_attn.shape[1]), label="Marker index")
+        plt.savefig(slide_output_dir / f"most_attended_marker_{h5_path.stem}.png")
+        plt.close()
 
         gradcam = _gradcam_per_category(
             model=model.vision_transformer,
@@ -181,14 +204,12 @@ def heatmaps_(
             coords_norm,
         ).detach()  # shape: [width, height, category]
 
-        scores = torch.softmax(
-            model.vision_transformer.forward(
-                bags=feats.unsqueeze(-2),
-                coords=coords_um.unsqueeze(-2),
-                mask=torch.zeros(len(feats), 1, dtype=torch.bool, device=device),
-            ),
-            dim=1,
-        )  # shape: [tile, category]
+        logits, _ = model.vision_transformer.forward(
+            bags=feats.unsqueeze(-2),
+            coords=coords_um.unsqueeze(-2),
+            mask=torch.zeros(len(feats), 1, dtype=torch.bool, device=device),
+        )
+        scores = torch.softmax(logits, dim=1) # shape: [tile, category]
         scores_2d = _vals_to_im(
             scores, coords_norm
         ).detach()  # shape: [width, height, category]
