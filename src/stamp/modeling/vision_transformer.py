@@ -10,6 +10,7 @@ from beartype import beartype
 from einops import repeat
 from jaxtyping import Bool, Float, jaxtyped
 from torch import Tensor, nn
+from fluoroformer.layers import MarkerAttention
 
 from stamp.modeling.alibi import MultiHeadALiBi
 
@@ -27,7 +28,6 @@ def feed_forward(
         nn.Linear(hidden_dim, dim),
         nn.Dropout(dropout),
     )
-
 
 class SelfAttention(nn.Module):
     def __init__(
@@ -167,6 +167,8 @@ class VisionTransformer(nn.Module):
         dim_feedforward: int,
         dropout: float,
         use_alibi: bool,
+        hidden_dim: int,
+        embedding_dim: int, 
     ) -> None:
         super().__init__()
         self.class_token = nn.Parameter(torch.randn(dim_model))
@@ -186,6 +188,7 @@ class VisionTransformer(nn.Module):
             use_alibi=use_alibi,
         )
 
+        self.marker_attention = MarkerAttention(embedding_dim, hidden_dim) # needed input: (batch, marker, embedding_dim, n_tiles)
         self.mlp_head = nn.Sequential(nn.Linear(dim_model, dim_output))
 
     @jaxtyped(typechecker=beartype)
@@ -235,8 +238,12 @@ class VisionTransformer(nn.Module):
                     attn_mask=square_attn_mask,
                     alibi_mask=alibi_mask,
                 )
+        print("Input to MarkerAttention:", bags.shape)
+        bags = self.marker_attention(bags) 
+        print(bags.shape)
 
         # Only take class token
         bags = bags[:, 0]
+
 
         return self.mlp_head(bags)
