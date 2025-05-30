@@ -6,7 +6,7 @@ from dataclasses import KW_ONLY, dataclass
 from itertools import groupby
 from pathlib import Path
 from typing import BinaryIO, Generic, NewType, TextIO, TypeAlias, TypeVar, cast
-
+from einops import rearrange
 import h5py
 import numpy as np
 import pandas as pd
@@ -15,9 +15,11 @@ from jaxtyping import Bool, Float, Integer
 from packaging.version import Version
 from torch import Tensor
 from torch.utils.data import DataLoader, Dataset
+from typing import Optional
 
 import stamp
 from stamp.preprocessing.tiling import Microns, SlideMPP, TilePixels
+from stamp.modeling.data import MultiplexFeatureBagDataset
 
 _logger = logging.getLogger("stamp")
 
@@ -70,6 +72,9 @@ def dataloader_from_patient_data(
     shuffle: bool,
     num_workers: int,
     transform: Callable[[Tensor], Tensor] | None,
+    use_multiplex: bool = False,
+    feature_folder: Optional[Path] = None,
+    channel_order: Optional[list[str]] = None,
 ) -> tuple[
     DataLoader[tuple[Bags, CoordinatesBatch, BagSizes, EncodedTargets]],
     Sequence[Category],
@@ -87,12 +92,21 @@ def dataloader_from_patient_data(
         categories if categories is not None else list(np.unique(raw_ground_truths))
     )
     one_hot = torch.tensor(raw_ground_truths.reshape(-1, 1) == categories)
-    ds = BagDataset(
-        bags=[patient.feature_files for patient in patient_data],
-        bag_size=bag_size,
-        ground_truths=one_hot,
-        transform=transform,
-    )
+    if use_multiplex:
+        ds = MultiplexFeatureBagDataset(
+            feature_folder=feature_folder,
+            channel_order=channel_order,
+            n_tiles=bag_size,
+            sample_ids=[...],  # extract from patient_data
+            ext="h5",
+        )
+    else:
+        ds = BagDataset(
+            bags=[patient.feature_files for patient in patient_data],
+            bag_size=bag_size,
+            ground_truths=one_hot,
+            transform=transform,
+        )
 
     return (
         cast(
@@ -189,6 +203,43 @@ class BagDataset(Dataset[tuple[_Bag, _Coordinates, BagSize, _EncodedTarget]]):
                 self.ground_truths[index],
             )
 
+@dataclass
+class MultiplexFeatureBagDataset(Dataset):
+    def __init__(self, feature_folder, channel_order, n_tiles, sample_ids=None, ext="h5"):
+        self.feature_folder = Path(feature_folder)
+        self.channel_order = channel_order
+        self.n_tiles = n_tiles
+        self.ext = ext
+
+        # If sample_ids not provided, infer from files
+        if sample_ids is None:
+            # Assumes files are named like sampleid_marker.h5
+            all_files = list(self.feature_folder.glob(f"*.{self.ext}"))
+            # Extract sample ids by splitting at the last underscore
+            self.sample_ids = sorted(
+                {f.stem.rsplit("_", 1)[0] for f in all_files}
+            )
+        else:
+            self.sample_ids = sample_ids
+
+    def __len__(self):
+        return len(self.sample_ids)
+
+    def __getitem__(self, idx):
+        sample_id = self.sample_ids[idx]
+        features_per_marker = []
+        for marker in self.channel_order:
+            # Adjust this pattern to match your file naming!
+            feature_path = self.feature_folder / f"{sample_id}_{marker}.{self.ext}"
+            if not feature_path.exists():
+                raise FileNotFoundError(f"Feature file not found: {feature_path}")
+            with h5py.File(feature_path, "r") as h5:
+                feats = h5["feat_1"][:self.n_tiles]  # shape: (n_tiles, embedding_dim)
+            features_per_marker.append(feats)
+        features = np.stack(features_per_marker, axis=0)  # (marker, n_tiles, embedding_dim)
+        features = rearrange(features, "m t e -> m e t")  # (marker, embedding_dim, n_tiles)
+        return torch.from_numpy(features).float()
+    
 
 @dataclass
 class CoordsInfo:
