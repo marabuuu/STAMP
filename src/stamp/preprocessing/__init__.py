@@ -30,7 +30,10 @@ from stamp.preprocessing.tiling import (
     TilePixels,
     get_slide_mpp_,
     tiles_with_cache,
+    select_channel_files
 )
+
+import yaml
 
 __author__ = "Marko van Treeck"
 __copyright__ = "Copyright (C) 2022-2024 Marko van Treeck"
@@ -142,6 +145,7 @@ def extract_(
     device: DeviceLikeType,
     default_slide_mpp: SlideMPP | None,
     generate_hash: bool,
+    config_path: Path = Path("config.yaml"),
 ) -> None:
     """
     Extracts features from slides.
@@ -153,6 +157,10 @@ def extract_(
             If not `None`, ignore the slide metadata MPP, instead replacing it with this value.
             Useful for slides without metadata.
     """
+    with open(config_path) as f:
+        config = yaml.safe_load(f)
+    preproc_cfg = config["preprocessing"]
+
     match extractor:
         case ExtractorName.CTRANSPATH:
             from stamp.preprocessing.extractor.ctranspath import ctranspath
@@ -249,90 +257,101 @@ def extract_(
         progress.set_description(str(slide_path.relative_to(wsi_dir)))
         _logger.debug(f"processing {slide_path}")
 
-        feature_output_path = feat_output_dir / slide_path.relative_to(
-            wsi_dir
-        ).with_suffix(".h5")
-        if feature_output_path.exists():
-            _logger.debug(
-                f"skipping {slide_path} because {feature_output_path} already exists"
-            )
-            continue
+            # Use the parent folder or appropriate folder containing the TIFFs
+        sample_folder = slide_path.parent
 
-        feature_output_path.parent.mkdir(parents=True, exist_ok=True)
+        selected_files = select_channel_files(
+            folder=sample_folder,
+            channel_order=preproc_cfg["channel_order"],
+            dapi_index=preproc_cfg.get("dapi_index"),
+            exclude_bgsub=preproc_cfg.get("exclude_bgsub"),
+        )
 
-        try:
-            ds = _TileDataset(
-                slide_path=slide_path,
-                cache_dir=cache_dir,
-                cache_tiles_ext=cache_tiles_ext,
-                transform=extractor.transform,
-                tile_size_um=tile_size_um,
-                tile_size_px=tile_size_px,
-                max_supertile_size_slide_px=SlidePixels(2**10),
-                max_workers=max_workers,
-                default_slide_mpp=default_slide_mpp,
-            )
-            # Parallelism is implemented in the dataset iterator already, so one worker is enough!
-            dl = DataLoader(ds, batch_size=64, num_workers=1, drop_last=False)
-
-            feats, xs_um, ys_um = [], [], []
-            for tiles, xs, ys in tqdm(dl, leave=False):
-                with torch.inference_mode():
-                    feats.append(model(tiles.to(device)).detach().half().cpu())
-                xs_um.append(xs.float())
-                ys_um.append(ys.float())
-        except MPPExtractionError:
-            _logger.exception(
-                "failed to extract MPP from slide. "
-                "You can try manually setting it by adding `preprocessing.default_slide_mpp = <MPP>` "
-            )
-            continue
-        except Exception:
-            _logger.exception(f"error while extracting features from {slide_path}")
-            continue
-
-        if len(feats) == 0:
-            _logger.info(f"no tiles found in {slide_path}, skipping")
-            continue
-
-        coords = torch.stack([torch.concat(xs_um), torch.concat(ys_um)], dim=1).numpy()
-
-        # Save the file under an intermediate name to prevent half-written files
-        with (
-            NamedTemporaryFile(dir=output_dir, delete=False) as tmp_h5_file,
-            h5py.File(tmp_h5_file, "w") as h5_fp,
-        ):
-            try:
-                h5_fp["coords"] = coords
-                h5_fp["feats"] = torch.concat(feats).numpy()
-
-                h5_fp.attrs["stamp_version"] = stamp.__version__
-                h5_fp.attrs["extractor"] = extractor_id
-                h5_fp.attrs["unit"] = "um"
-                h5_fp.attrs["tile_size_um"] = tile_size_um  # changed in v2.1.0
-                h5_fp.attrs["tile_size_px"] = tile_size_px
-                h5_fp.attrs["code_hash"] = code_hash
-            except Exception:
-                _logger.exception(f"error while writing {feature_output_path}")
-                if tmp_h5_file is not None:
-                    Path(tmp_h5_file.name).unlink(missing_ok=True)
+        for channel_file in selected_files:
+            feature_output_path = feat_output_dir / slide_path.relative_to(
+                wsi_dir
+            ).with_suffix(".h5")
+            if feature_output_path.exists():
+                _logger.debug(
+                    f"skipping {slide_path} because {feature_output_path} already exists"
+                )
                 continue
 
-            Path(tmp_h5_file.name).rename(feature_output_path)
-            _logger.debug(f"saved features to {feature_output_path}")
+            feature_output_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Save rejection thumbnail
-        thumbnail_path = feat_output_dir / slide_path.relative_to(wsi_dir).with_suffix(
-            ".jpg"
-        )
-        thumbnail_path.parent.mkdir(exist_ok=True, parents=True)
-        _get_rejection_thumb(
-            openslide.open_slide(str(slide_path)),
-            size=(512, 512),
-            coords_um=coords,
-            tile_size_um=tile_size_um,
-            default_slide_mpp=default_slide_mpp,
-        ).convert("RGB").save(thumbnail_path)
+            try:
+                ds = _TileDataset(
+                    slide_path=slide_path,
+                    cache_dir=cache_dir,
+                    cache_tiles_ext=cache_tiles_ext,
+                    transform=extractor.transform,
+                    tile_size_um=tile_size_um,
+                    tile_size_px=tile_size_px,
+                    max_supertile_size_slide_px=SlidePixels(2**10),
+                    max_workers=max_workers,
+                    default_slide_mpp=default_slide_mpp,
+                )
+                # Parallelism is implemented in the dataset iterator already, so one worker is enough!
+                dl = DataLoader(ds, batch_size=64, num_workers=1, drop_last=False)
+
+                feats, xs_um, ys_um = [], [], []
+                for tiles, xs, ys in tqdm(dl, leave=False):
+                    with torch.inference_mode():
+                        feats.append(model(tiles.to(device)).detach().half().cpu())
+                    xs_um.append(xs.float())
+                    ys_um.append(ys.float())
+            except MPPExtractionError:
+                _logger.exception(
+                    "failed to extract MPP from slide. "
+                    "You can try manually setting it by adding `preprocessing.default_slide_mpp = <MPP>` "
+                )
+                continue
+            except Exception:
+                _logger.exception(f"error while extracting features from {slide_path}")
+                continue
+
+            if len(feats) == 0:
+                _logger.info(f"no tiles found in {slide_path}, skipping")
+                continue
+
+            coords = torch.stack([torch.concat(xs_um), torch.concat(ys_um)], dim=1).numpy()
+
+            # Save the file under an intermediate name to prevent half-written files
+            with (
+                NamedTemporaryFile(dir=output_dir, delete=False) as tmp_h5_file,
+                h5py.File(tmp_h5_file, "w") as h5_fp,
+            ):
+                try:
+                    h5_fp["coords"] = coords
+                    h5_fp["feats"] = torch.concat(feats).numpy()
+
+                    h5_fp.attrs["stamp_version"] = stamp.__version__
+                    h5_fp.attrs["extractor"] = extractor_id
+                    h5_fp.attrs["unit"] = "um"
+                    h5_fp.attrs["tile_size_um"] = tile_size_um  # changed in v2.1.0
+                    h5_fp.attrs["tile_size_px"] = tile_size_px
+                    h5_fp.attrs["code_hash"] = code_hash
+                except Exception:
+                    _logger.exception(f"error while writing {feature_output_path}")
+                    if tmp_h5_file is not None:
+                        Path(tmp_h5_file.name).unlink(missing_ok=True)
+                    continue
+
+                Path(tmp_h5_file.name).rename(feature_output_path)
+                _logger.debug(f"saved features to {feature_output_path}")
+
+            # Save rejection thumbnail
+            thumbnail_path = feat_output_dir / slide_path.relative_to(wsi_dir).with_suffix(
+                ".jpg"
+            )
+            thumbnail_path.parent.mkdir(exist_ok=True, parents=True)
+            _get_rejection_thumb(
+                openslide.open_slide(str(slide_path)),
+                size=(512, 512),
+                coords_um=coords,
+                tile_size_um=tile_size_um,
+                default_slide_mpp=default_slide_mpp,
+            ).convert("RGB").save(thumbnail_path)
 
 
 def _get_rejection_thumb(

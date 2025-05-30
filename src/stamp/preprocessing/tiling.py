@@ -1,6 +1,7 @@
 import hashlib
 import json
 import logging
+import os
 import re
 import xml.dom.minidom as minidom
 from collections.abc import Iterator, Mapping
@@ -339,6 +340,34 @@ def _supertiles(
         for future in futures.as_completed(futs):
             yield future.result()
 
+def select_channel_files(
+    folder: Path,
+    channel_order: list[str],
+    dapi_index: int,
+    exclude_bgsub: bool,
+) -> list[Path]:
+    """Selects TIFF files for each channel in the specified order, with DAPI and bgsub logic."""
+    all_tif_files = [
+        f for f in os.listdir(folder)
+        if f.lower().endswith(".tif") and not f.startswith(".")
+    ]
+    if exclude_bgsub:
+        all_tif_files = [f for f in all_tif_files if "bgsub" not in f.lower()]
+
+    selected_files = []
+    for channel in channel_order:
+        channel_lower = channel.lower()
+        if channel_lower == "dapi":
+            dapi_files = sorted([f for f in all_tif_files if "dapi" in f.lower()])
+            if len(dapi_files) <= dapi_index:
+                raise ValueError(f"Not enough DAPI files found in {folder}!")
+            selected_files.append(folder / dapi_files[dapi_index])
+        else:
+            files = [f for f in all_tif_files if channel_lower in f.lower()]
+            if not files:
+                raise ValueError(f"No file found for channel {channel} in {folder}")
+            selected_files.append(folder / files[0])
+    return selected_files
 
 class MPPExtractionError(Exception):
     """Raised when the Microns Per Pixel (MPP) extraction from the slide's metadata fails"""
