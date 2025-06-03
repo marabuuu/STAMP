@@ -481,7 +481,14 @@ def _extract_mpp_from_metadata(slide: openslide.AbstractSlide) -> SlideMPP | Non
             return None
         doc = minidom.parseString(xml_path)
         collection = doc.documentElement
+        collection = doc.documentElement
+        if collection is None:
+            _logger.error("failed to parse XML from image description")
+            return None
         images = collection.getElementsByTagName("Image")
+        if not images:
+            _logger.warning("no images found in XML metadata")
+            return None
         pixels = images[0].getElementsByTagName("Pixels")
         mpp = float(pixels[0].getAttribute("PhysicalSizeX"))
     except Exception:
