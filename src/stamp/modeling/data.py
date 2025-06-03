@@ -19,7 +19,6 @@ from typing import Optional
 
 import stamp
 from stamp.preprocessing.tiling import Microns, SlideMPP, TilePixels
-from stamp.modeling.data import MultiplexFeatureBagDataset
 
 _logger = logging.getLogger("stamp")
 
@@ -234,7 +233,7 @@ class MultiplexFeatureBagDataset(Dataset):
             if not feature_path.exists():
                 raise FileNotFoundError(f"Feature file not found: {feature_path}")
             with h5py.File(feature_path, "r") as h5:
-                feats = h5["feat_1"][:self.n_tiles]  # shape: (n_tiles, embedding_dim)
+                feats = h5["feat"][:self.n_tiles]  # shape: (n_tiles, embedding_dim)
             features_per_marker.append(feats)
         features = np.stack(features_per_marker, axis=0)  # (marker, n_tiles, embedding_dim)
         features = rearrange(features, "m t e -> m e t")  # (marker, embedding_dim, n_tiles)
