@@ -249,15 +249,12 @@ def extract_(
         for extension in supported_extensions
         for slide_path in wsi_dir.glob(f"**/*{extension}")
     ]
-    # We shuffle so if we run multiple jobs on multiple computers at the same time,
-    # They won't interfere with each other too much
     shuffle(slide_paths)
 
     for slide_path in (progress := tqdm(slide_paths)):
         progress.set_description(str(slide_path.relative_to(wsi_dir)))
         _logger.debug(f"processing {slide_path}")
 
-            # Use the parent folder or appropriate folder containing the TIFFs
         sample_folder = slide_path.parent
 
         selected_files = select_channel_files(
@@ -267,16 +264,16 @@ def extract_(
             exclude_bgsub=preproc_cfg.get("exclude_bgsub"),
         )
 
+        # Only process the selected files (filtered by select_channel_files)
         for idx, channel_file in enumerate(selected_files):
             if channel_file is None:
                 _logger.warning(f"Channel {preproc_cfg['channel_order'][idx]} is missing in {sample_folder}, skipping.")
-                continue 
-            feature_output_path = feat_output_dir / slide_path.relative_to(
-                wsi_dir
-            ).with_suffix(".h5")
+                continue
+
+            feature_output_path = feat_output_dir / channel_file.relative_to(wsi_dir).with_suffix(".h5")
             if feature_output_path.exists():
                 _logger.debug(
-                    f"skipping {slide_path} because {feature_output_path} already exists"
+                    f"skipping {channel_file} because {feature_output_path} already exists"
                 )
                 continue
 
@@ -284,7 +281,7 @@ def extract_(
 
             try:
                 ds = _TileDataset(
-                    slide_path=slide_path,
+                    slide_path=channel_file,  # Use the selected file!
                     cache_dir=cache_dir,
                     cache_tiles_ext=cache_tiles_ext,
                     transform=extractor.transform,
@@ -294,7 +291,6 @@ def extract_(
                     max_workers=max_workers,
                     default_slide_mpp=default_slide_mpp,
                 )
-                # Parallelism is implemented in the dataset iterator already, so one worker is enough!
                 dl = DataLoader(ds, batch_size=64, num_workers=1, drop_last=False)
 
                 feats, xs_um, ys_um = [], [], []
@@ -310,16 +306,15 @@ def extract_(
                 )
                 continue
             except Exception:
-                _logger.exception(f"error while extracting features from {slide_path}")
+                _logger.exception(f"error while extracting features from {channel_file}")
                 continue
 
             if len(feats) == 0:
-                _logger.info(f"no tiles found in {slide_path}, skipping")
+                _logger.info(f"no tiles found in {channel_file}, skipping")
                 continue
 
             coords = torch.stack([torch.concat(xs_um), torch.concat(ys_um)], dim=1).numpy()
 
-            # Save the file under an intermediate name to prevent half-written files
             with (
                 NamedTemporaryFile(dir=output_dir, delete=False) as tmp_h5_file,
                 h5py.File(tmp_h5_file, "w") as h5_fp,
@@ -331,7 +326,7 @@ def extract_(
                     h5_fp.attrs["stamp_version"] = stamp.__version__
                     h5_fp.attrs["extractor"] = extractor_id
                     h5_fp.attrs["unit"] = "um"
-                    h5_fp.attrs["tile_size_um"] = tile_size_um  # changed in v2.1.0
+                    h5_fp.attrs["tile_size_um"] = tile_size_um
                     h5_fp.attrs["tile_size_px"] = tile_size_px
                     h5_fp.attrs["code_hash"] = code_hash
                 except Exception:
@@ -344,18 +339,17 @@ def extract_(
                 _logger.debug(f"saved features to {feature_output_path}")
 
             # Save rejection thumbnail
-            thumbnail_path = feat_output_dir / slide_path.relative_to(wsi_dir).with_suffix(
+            thumbnail_path = feat_output_dir / channel_file.relative_to(wsi_dir).with_suffix(
                 ".jpg"
             )
             thumbnail_path.parent.mkdir(exist_ok=True, parents=True)
             _get_rejection_thumb(
-                openslide.open_slide(str(slide_path)),
+                openslide.open_slide(str(channel_file)),
                 size=(512, 512),
                 coords_um=coords,
                 tile_size_um=tile_size_um,
                 default_slide_mpp=default_slide_mpp,
             ).convert("RGB").save(thumbnail_path)
-
 
 def _get_rejection_thumb(
     slide: openslide.AbstractSlide,
