@@ -18,7 +18,7 @@ from typing import (
     TypeAlias,
     TypedDict,
     TypeVar,
-    cast,
+    cast
 )
 from zipfile import ZipFile
 
@@ -345,8 +345,11 @@ def select_channel_files(
     channel_order: list[str],
     dapi_index: int,
     exclude_bgsub: bool,
-) -> list[Path]:
-    """Selects TIFF files for each channel in the specified order, with DAPI and bgsub logic."""
+) -> list[Path | None]:
+    """
+    Selects TIFF files for each channel in the specified order, with DAPI and bgsub logic.
+    If a channel is missing, None is inserted in its place.
+    """
     all_tif_files = [
         f for f in os.listdir(folder)
         if f.lower().endswith(".tif") and not f.startswith(".")
@@ -354,19 +357,23 @@ def select_channel_files(
     if exclude_bgsub:
         all_tif_files = [f for f in all_tif_files if "bgsub" not in f.lower()]
 
-    selected_files = []
+    selected_files: list[Path | None] = []
     for channel in channel_order:
         channel_lower = channel.lower()
         if channel_lower == "dapi":
             dapi_files = sorted([f for f in all_tif_files if "dapi" in f.lower()])
             if len(dapi_files) <= dapi_index:
-                raise ValueError(f"Not enough DAPI files found in {folder}!")
-            selected_files.append(folder / dapi_files[dapi_index])
+                logging.warning(f"Not enough DAPI files found in {folder} for index {dapi_index}. Inserting None.")
+                selected_files.append(None)
+            else:
+                selected_files.append(folder / dapi_files[dapi_index])
         else:
             files = [f for f in all_tif_files if channel_lower in f.lower()]
             if not files:
-                raise ValueError(f"No file found for channel {channel} in {folder}")
-            selected_files.append(folder / files[0])
+                logging.warning(f"No file found for channel {channel} in {folder}. Inserting None.")
+                selected_files.append(None)
+            else:
+                selected_files.append(folder / files[0])
     return selected_files
 
 class MPPExtractionError(Exception):

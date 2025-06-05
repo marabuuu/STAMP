@@ -267,7 +267,10 @@ def extract_(
             exclude_bgsub=preproc_cfg.get("exclude_bgsub"),
         )
 
-        for channel_file in selected_files:
+        for idx, channel_file in enumerate(selected_files):
+            if channel_file is None:
+                _logger.warning(f"Channel {preproc_cfg['channel_order'][idx]} is missing in {sample_folder}, skipping.")
+                continue 
             feature_output_path = feat_output_dir / slide_path.relative_to(
                 wsi_dir
             ).with_suffix(".h5")
