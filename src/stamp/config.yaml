@@ -1,7 +1,7 @@
 preprocessing:
-  output_dir: "/mnt/bulk-mars/maralampert/snickers/code/multiplex/stamp-test-experiment/"
-  wsi_dir: "/mnt/bulk-mars/maralampert/snickers/data/GUILLOT-CHARITE-CCA-IMGS/data/Multiplex-fluorescence-images/CCA6/38118_4I nice pics/"
-  channel_order: ["cd3", "cd4", "cd8", "cd16", "cd20", "cd45", "cd163", "ck7", "ck19", "coll1", "dapi", "iba1", "HepPar1", "ki67", "mpo", "asma", "XCR", "YCA", "antibody"]
+  output_dir: "/absolute/path/to/stamp-test-experiment"
+  wsi_dir: "/absolute/path/to/wsi_dir"
+  channel_order: ["list", "of", "markers"]  # e.g. ["CD3", "CD8", "CD20", "DAPI"]
   dapi_index: 2  # Use the third DAPI file (0-based index)
   exclude_bgsub: true
   # Extractor to use for feature extractor.  Possible options are "ctranspath",
@@ -17,7 +17,7 @@ preprocessing:
 
   # Having a cache dir will speed up extracting features multiple times,
   # e.g. with different feature extractors.  Optional.
-  cache_dir: "/mnt/bulk-mars/maralampert/snickers/code/multiplex/stamp-test-experiment/cache/"
+  cache_dir: "/absolute/path/to/stamp-test-experiment/../cache"
 
   # The extension of the tiles to cache. Use "png" for lossless compression,
   # or "jpg" for lossy compression (requires around x100 less memory, 
