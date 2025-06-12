@@ -71,6 +71,8 @@ class LitVisionTransformer(lightning.LightningModule):
             dim_feedforward=dim_feedforward,
             dropout=dropout,
             use_alibi=use_alibi,
+            hidden_dim=dim_model, 
+            embedding_dim=dim_model, 
         )
         self.class_weights = category_weights
 
@@ -120,6 +122,8 @@ class LitVisionTransformer(lightning.LightningModule):
         _ = batch_idx  # unused
 
         bags, coords, bag_sizes, targets = batch
+
+        print(f"[DEBUG] step: {step_name}, bags.shape: {bags.shape}, coords.shape: {coords.shape}, bag_sizes: {bag_sizes}, targets.shape: {targets.shape}")
 
         logits = self.vision_transformer(
             bags, coords=coords, mask=_mask_from_bags(bags=bags, bag_sizes=bag_sizes)
