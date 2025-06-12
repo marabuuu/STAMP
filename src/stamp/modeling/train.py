@@ -247,7 +247,7 @@ def setup_model_for_training(
     del categories  # Let's not accidentally reuse the original categories
     valid_dl, _ = dataloader_from_patient_data(
         patient_data=[patient_to_data[patient] for patient in valid_patients],
-        bag_size=None,  # Use all the patient data for validation
+        bag_size=bag_size,  # Use only part of bags for validation as otherwise OOM explodes
         categories=train_categories,
         batch_size=1,
         shuffle=False,
