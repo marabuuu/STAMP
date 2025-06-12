@@ -159,7 +159,7 @@ def _predict(
 
     test_dl, _ = dataloader_from_patient_data(
         patient_data=list(patient_to_data.values()),
-        bag_size=None,  # Use all the tiles for deployment
+        bag_size= 8,  
         # Use same encoding scheme as during training
         categories=list(model.categories),
         batch_size=1,
