@@ -198,53 +198,80 @@ class VisionTransformer(nn.Module):
         *,
         coords: Float[Tensor, "batch tile 2"],
         mask: Bool[Tensor, "batch tile"] | None,
-    ) -> tuple[Tensor, Any]: 
-        batch_size, _n_tiles, _n_features = bags.shape
+    ) -> tuple[Tensor, Any]:
+        print("BAGS SHAPE AT FORWARD ENTRY:", bags.shape)
 
-        # Map input sequence to latent space of TransMIL
-        bags = self.project_features(bags)
+        # --- Shape normalization ---
+        if bags.dim() == 3:
+            # Classic: (batch, tile, feature)
+            batch_size, n_tiles, embedding_dim = bags.shape
+            n_markers = 1
+            bags = bags.unsqueeze(1)  # (batch, 1, tile, feature)
+            coords = coords.unsqueeze(1)  # (batch, 1, tile, 2)
+        elif bags.dim() == 4:
+            # Multiplex: (batch, marker, tile, feature)
+            batch_size, n_markers, n_tiles, embedding_dim = bags.shape
+        else:
+            raise ValueError(f"Unexpected bags shape: {bags.shape}")
 
-        # Prepend a class token to every bag,
-        # include it in the mask.
-        # TODO should the tiles be able to refer to the class token? Test!
+        # Permute to (batch, marker, embedding_dim, n_tiles)
+        bags = bags.permute(0, 1, 3, 2)  # (batch, marker, embedding_dim, n_tiles)
+        coords = coords.permute(0, 1, 3, 2) if coords.dim() == 4 else coords  # (batch, marker, 2, n_tiles)
+
+        # Flatten marker and tile for transformer input
+        bags = bags.reshape(batch_size, n_markers * n_tiles, embedding_dim)  # (batch, sequence, embedding_dim)
+        coords = coords.reshape(batch_size, n_markers * n_tiles, 2)  # (batch, sequence, 2)
+        if mask is not None:
+            mask = mask.reshape(batch_size, n_markers * n_tiles)  # (batch, sequence)
+
+        # Project features to model dimension
+        bags = self.project_features(bags)  # (batch, sequence, dim_model)
+
+        # Prepend class token
         cls_tokens = repeat(self.class_token, "d -> b 1 d", b=batch_size)
         bags = torch.cat([cls_tokens, bags], dim=1)
         coords = torch.cat(
             [torch.zeros(batch_size, 1, 2).type_as(coords), coords], dim=1
         )
 
-        match mask:
-            case None:
-                bags = self.transformer(bags, coords=coords, attn_mask=None)
+        # Prepare attention mask
+        if mask is not None:
+            mask_with_class_token = torch.cat(
+                [torch.zeros(mask.shape[0], 1).type_as(mask), mask], dim=1
+            )
+            square_attn_mask = torch.einsum(
+                "bq,bk->bqk", mask_with_class_token, mask_with_class_token
+            )
+            # Don't allow other tiles to reference the class token
+            square_attn_mask[:, 1:, 0] = True
 
-            case _:
-                mask_with_class_token = torch.cat(
-                    [torch.zeros(mask.shape[0], 1).type_as(mask), mask], dim=1
-                )
-                square_attn_mask = torch.einsum(
-                    "bq,bk->bqk", mask_with_class_token, mask_with_class_token
-                )
-                # Don't allow other tiles to reference the class token
-                square_attn_mask[:, 1:, 0] = True
+            # Don't apply ALiBi to the query, as the coordinates don't make sense here
+            alibi_mask = torch.zeros_like(square_attn_mask)
+            alibi_mask[:, 0, :] = True
+            alibi_mask[:, :, 0] = True
 
-                # Don't apply ALiBi to the query, as the coordinates don't make sense here
-                alibi_mask = torch.zeros_like(square_attn_mask)
-                alibi_mask[:, 0, :] = True
-                alibi_mask[:, :, 0] = True
+            bags = self.transformer(
+                bags,
+                coords=coords,
+                attn_mask=square_attn_mask,
+                alibi_mask=alibi_mask,
+            )
+        else:
+            bags = self.transformer(bags, coords=coords, attn_mask=None, alibi_mask=None)
 
-                bags = self.transformer(
-                    bags,
-                    coords=coords,
-                    attn_mask=square_attn_mask,
-                    alibi_mask=alibi_mask,
-                )
-        print("Input to MarkerAttention:", bags.shape)
-        bags, marker_attn = self.marker_attention(bags)
-        print(bags.shape)
+        # Remove the class token
+        bags_wo_cls = bags[:, 1:, :]  # (batch, n_markers * n_tiles, embedding_dim)
 
-        # Only take class token
-        bags = bags[:, 0]
+        # Reshape to (batch, marker, n_tiles, embedding_dim)
+        bags_reshaped = bags_wo_cls.view(batch_size, n_markers, n_tiles, embedding_dim)
 
-        logits = self.mlp_head(bags)
+        # Permute to (batch, marker, embedding_dim, n_tiles) for MarkerAttention
+        bags_for_marker_attention = bags_reshaped.permute(0, 1, 3, 2)
 
-        return logits, marker_attn
+        # MarkerAttention expects (batch, marker, embedding_dim, n_tiles)
+        marker_attn_out = self.marker_attention(bags_for_marker_attention)
+
+        # Final MLP head
+        logits = self.mlp_head(marker_attn_out)
+
+        return logits, marker_attn_out

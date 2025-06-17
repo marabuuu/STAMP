@@ -99,6 +99,13 @@ def dataloader_from_patient_data(
             sample_ids=[...],  # extract from patient_data
             ext="h5",
         )
+        loader = DataLoader(
+            ds,
+            batch_size=batch_size,
+            shuffle=shuffle,
+            num_workers=num_workers,
+            # No collate_fn here!
+        )
     else:
         ds = BagDataset(
             bags=[patient.feature_files for patient in patient_data],
@@ -106,17 +113,18 @@ def dataloader_from_patient_data(
             ground_truths=one_hot,
             transform=transform,
         )
+        loader = DataLoader(
+            ds,
+            batch_size=batch_size,
+            shuffle=shuffle,
+            num_workers=num_workers,
+            collate_fn=_collate_to_tuple,
+        )
 
     return (
         cast(
             DataLoader[tuple[Bags, CoordinatesBatch, BagSizes, EncodedTargets]],
-            DataLoader(
-                ds,
-                batch_size=batch_size,
-                shuffle=shuffle,
-                num_workers=num_workers,
-                collate_fn=_collate_to_tuple,
-            ),
+            loader,
         ),
         list(categories),
     )
@@ -225,19 +233,26 @@ class MultiplexFeatureBagDataset(Dataset):
         return len(self.sample_ids)
 
     def __getitem__(self, idx):
+        print(f"[DEBUG] __getitem__ called for index {idx}")
         sample_id = self.sample_ids[idx]
         features_per_marker = []
+        coords_per_marker = []
         for marker in self.channel_order:
             # Adjust this pattern to match your file naming!
             feature_path = self.feature_folder / f"{sample_id}_{marker}.{self.ext}"
             if not feature_path.exists():
                 raise FileNotFoundError(f"Feature file not found: {feature_path}")
             with h5py.File(feature_path, "r") as h5:
-                feats = h5["feat"][:self.n_tiles]  # shape: (n_tiles, embedding_dim)
+                feats = h5["feats"]
+                coords = h5["coords"]
             features_per_marker.append(feats)
+            coords_per_marker.append(coords)
         features = np.stack(features_per_marker, axis=0)  # (marker, n_tiles, embedding_dim)
+        coords = np.stack(coords_per_marker, axis=0)      # (marker, n_tiles, 2)
         features = rearrange(features, "m t e -> m e t")  # (marker, embedding_dim, n_tiles)
-        return torch.from_numpy(features).float()
+        coords = rearrange(coords, "m t c -> m c t")      # (marker, 2, n_tiles)
+        print(f"[DEBUG] __getitem__ output shapes: feats.shape={features.shape}, coords.shape={coords.shape}")
+        return torch.from_numpy(features).float(), torch.from_numpy(coords).float()
     
 
 @dataclass

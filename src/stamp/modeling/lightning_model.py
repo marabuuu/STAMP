@@ -113,47 +113,52 @@ class LitVisionTransformer(lightning.LightningModule):
         return self.vision_transformer(bags)
 
     def _step(
-        self,
-        *,
-        step_name: str,
-        batch: tuple[Bags, CoordinatesBatch, BagSizes, EncodedTargets],
-        batch_idx: int,
-    ) -> Loss:
+    self,
+    *,
+    step_name: str,
+    batch,
+    batch_idx: int,
+) -> Loss:
         _ = batch_idx  # unused
 
-        bags, coords, bag_sizes, targets = batch
+        # Multiplex: batch = (bags, coords)
+        # Classic:   batch = (bags, coords, bag_sizes, targets)
+        if len(batch) == 2:
+            bags, coords = batch
+            bag_sizes = None
+            targets = None
+            mask = None
+        else:
+            bags, coords, bag_sizes, targets = batch
+            mask = _mask_from_bags(bags=bags, bag_sizes=bag_sizes)
 
-        print(f"[DEBUG] step: {step_name}, bags.shape: {bags.shape}, coords.shape: {coords.shape}, bag_sizes: {bag_sizes}, targets.shape: {targets.shape}")
+        print(f"[DEBUG] step: {step_name}, bags.shape: {bags.shape}, coords.shape: {coords.shape}")
 
-        logits = self.vision_transformer(
-            bags, coords=coords, mask=_mask_from_bags(bags=bags, bag_sizes=bag_sizes)
-        )
+        logits = self.vision_transformer(bags, coords=coords, mask=mask)
 
-        loss = nn.functional.cross_entropy(
-            logits, targets.type_as(logits), weight=self.class_weights.type_as(logits)
-        )
-
-        self.log(
-            f"{step_name}_loss",
-            loss,
-            on_step=False,
-            on_epoch=True,
-            prog_bar=True,
-            sync_dist=True,
-        )
-
-        if step_name == "validation":
-            # TODO this is a bit ugly, we'd like to have `_step` without special cases
-            self.valid_auroc.update(logits, targets.long().argmax(-1))
-            self.log(
-                f"{step_name}_auroc",
-                self.valid_auroc,
-                on_step=False,
-                on_epoch=True,
-                sync_dist=True,
+        # Only compute loss if targets are present (classic)
+        if targets is not None:
+            loss = nn.functional.cross_entropy(logits, targets.type_as(logits), weight=self.class_weights.type_as(logits))
+            self.log(f"{step_name}_loss", 
+                     loss,
+                     on_step=False,
+                     on_epoch=True,
+                     prog_bar=True,
+                     sync_dist=True,
             )
-
-        return loss
+            if step_name == "validation":
+                self.valid_auroc.update(logits, targets.long().argmax(-1))
+                self.log(
+                     f"{step_name}_auroc",
+                     self.valid_auroc,
+                     on_step=False,
+                     on_epoch=True,
+                     sync_dist=True,
+               )
+            return loss
+        else:
+            # Multiplex: just return logits (or you can return a dummy loss)
+            return logits
 
     def training_step(
         self,
