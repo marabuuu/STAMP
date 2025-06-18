@@ -29,6 +29,7 @@ class TrainConfig(BaseModel):
     # Dataset and -loader parameters
     bag_size: int = 512
     num_workers: int = min(os.cpu_count() or 1, 16)
+    channel_order: list[str]
 
     # Training paramenters
     batch_size: int = 64
@@ -43,6 +44,7 @@ class TrainConfig(BaseModel):
 
 class CrossvalConfig(TrainConfig):
     n_splits: int = Field(5, ge=2)
+    channel_order: list[str] 
 
 
 class DeploymentConfig(BaseModel):

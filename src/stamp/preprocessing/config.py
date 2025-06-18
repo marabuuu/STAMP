@@ -39,7 +39,7 @@ class PreprocessingConfig(BaseModel, arbitrary_types_allowed=True):
     max_workers: int = 8
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
     generate_hash: bool = True
-
+    
     channel_order: list[str]
     dapi_index: int = 2 
     exclude_bgsub: bool = True

@@ -53,6 +53,7 @@ def categorical_crossval_(
     # Dataset and -loader parameters
     bag_size: int,
     num_workers: int,
+    channel_order: list[str],
     # Training paramenters
     batch_size: int,
     max_epochs: int,
@@ -62,6 +63,7 @@ def categorical_crossval_(
     use_vary_precision_transform: bool,
     use_alibi: bool,
 ) -> None:
+    print(f"[DEBUG] crossval: channel_order = {channel_order}")
     patient_to_ground_truth: Final[dict[PatientId, GroundTruth]] = (
         patient_to_ground_truth_from_clini_table_(
             clini_table_path=clini_table,
@@ -145,6 +147,7 @@ def categorical_crossval_(
                 ground_truth_label=ground_truth_label,
                 bag_size=bag_size,
                 num_workers=num_workers,
+                channel_order=channel_order,
                 batch_size=batch_size,
                 patient_to_data={
                     patient_id: patient_data

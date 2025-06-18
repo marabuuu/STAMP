@@ -44,7 +44,7 @@ preprocessing:
 
 crossval:
   output_dir: "/path/to/save/files/to"
-
+  channel_order: ["list", "of", "markers"]  # e.g. ["CD3", "CD8", "CD20", "DAPI"]
   # An excel (.xlsx) or CSV (.csv) table containing the clinical information of
   # patients.  Patients not present in this file will be ignored during training.
   # Has to contain at least two columns,
@@ -97,7 +97,7 @@ crossval:
 
 training:
   output_dir: "/path/to/save/files/to"
-
+  channel_order: ["list", "of", "markers"]  # e.g. ["CD3", "CD8", "CD20", "DAPI"]
   # An excel (.xlsx) or CSV (.csv) table containing the clinical information of
   # patients.  Patients not present in this file will be ignored during training.
   # Has to contain at least two columns,

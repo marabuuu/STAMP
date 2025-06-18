@@ -72,8 +72,7 @@ def dataloader_from_patient_data(
     num_workers: int,
     transform: Callable[[Tensor], Tensor] | None,
     use_multiplex: bool = False,
-    feature_folder: Optional[Path] = None,
-    channel_order: Optional[list[str]] = None,
+    channel_order: list[str],
 ) -> tuple[
     DataLoader[tuple[Bags, CoordinatesBatch, BagSizes, EncodedTargets]],
     Sequence[Category],
@@ -85,20 +84,23 @@ def dataloader_from_patient_data(
             Order of classes for one-hot encoding.
             If `None`, classes are inferred from patient data.
     """
-
+    print(f"[DEBUG] dataloader_from_patient_data: channel_order = {channel_order}")
     raw_ground_truths = np.array([patient.ground_truth for patient in patient_data])
     categories = (
         categories if categories is not None else list(np.unique(raw_ground_truths))
     )
     one_hot = torch.tensor(raw_ground_truths.reshape(-1, 1) == categories)
     if use_multiplex:
+        print(f"[DEBUG] Using multiplex dataset class:")   #{type(ds)}")
+        print(patient_data[0])
         ds = MultiplexFeatureBagDataset(
-            feature_folder=feature_folder,
+            patient_data=patient_data,
             channel_order=channel_order,
             n_tiles=bag_size,
-            sample_ids=[...],  # extract from patient_data
-            ext="h5",
         )
+
+
+
         loader = DataLoader(
             ds,
             batch_size=batch_size,
@@ -113,6 +115,9 @@ def dataloader_from_patient_data(
             ground_truths=one_hot,
             transform=transform,
         )
+
+        print(f"[DEBUG] Using classic dataset class: {type(ds)}")
+
         loader = DataLoader(
             ds,
             batch_size=batch_size,
@@ -212,46 +217,42 @@ class BagDataset(Dataset[tuple[_Bag, _Coordinates, BagSize, _EncodedTarget]]):
 
 @dataclass
 class MultiplexFeatureBagDataset(Dataset):
-    def __init__(self, feature_folder, channel_order, n_tiles, sample_ids=None, ext="h5"):
-        self.feature_folder = Path(feature_folder)
+    def __init__(self, patient_data, channel_order, n_tiles):
+        self.patient_data = patient_data
         self.channel_order = channel_order
         self.n_tiles = n_tiles
-        self.ext = ext
 
-        # If sample_ids not provided, infer from files
-        if sample_ids is None:
-            # Assumes files are named like sampleid_marker.h5
-            all_files = list(self.feature_folder.glob(f"*.{self.ext}"))
-            # Extract sample ids by splitting at the last underscore
-            self.sample_ids = sorted(
-                {f.stem.rsplit("_", 1)[0] for f in all_files}
-            )
-        else:
-            self.sample_ids = sample_ids
+        print(f"[DEBUG] channel_order at init: {channel_order}")
+        assert len(channel_order) > 1, "Only one marker found in channel_order!"
 
     def __len__(self):
-        return len(self.sample_ids)
+        return len(self.patient_data)
 
     def __getitem__(self, idx):
-        print(f"[DEBUG] __getitem__ called for index {idx}")
-        sample_id = self.sample_ids[idx]
+        patient = self.patient_data[idx]
+        feature_files = patient.feature_files  # List of PosixPath, one per marker
+
+        # Ensure files are ordered according to self.channel_order
+        ordered_files = []
+        for marker in self.channel_order:
+            for f in feature_files:
+                if marker.lower() in f.name.lower():
+                    ordered_files.append(f)
+                    break
+            else:
+                raise FileNotFoundError(f"No file for marker {marker} in {feature_files}")
+
         features_per_marker = []
         coords_per_marker = []
-        for marker in self.channel_order:
-            # Adjust this pattern to match your file naming!
-            feature_path = self.feature_folder / f"{sample_id}_{marker}.{self.ext}"
-            if not feature_path.exists():
-                raise FileNotFoundError(f"Feature file not found: {feature_path}")
+        for feature_path in ordered_files:
             with h5py.File(feature_path, "r") as h5:
-                feats = h5["feats"]
-                coords = h5["coords"]
+                feats = h5["feats"]   # (tile, feature)
+                coords = h5["coords"] # (tile, 2)
             features_per_marker.append(feats)
             coords_per_marker.append(coords)
-        features = np.stack(features_per_marker, axis=0)  # (marker, n_tiles, embedding_dim)
-        coords = np.stack(coords_per_marker, axis=0)      # (marker, n_tiles, 2)
-        features = rearrange(features, "m t e -> m e t")  # (marker, embedding_dim, n_tiles)
-        coords = rearrange(coords, "m t c -> m c t")      # (marker, 2, n_tiles)
-        print(f"[DEBUG] __getitem__ output shapes: feats.shape={features.shape}, coords.shape={coords.shape}")
+
+        features = np.stack(features_per_marker, axis=0)  # (marker, tile, feature)
+        coords = np.stack(coords_per_marker, axis=0)      # (marker, tile, 2)
         return torch.from_numpy(features).float(), torch.from_numpy(coords).float()
     
 

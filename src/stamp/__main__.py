@@ -103,6 +103,7 @@ def _run_cli(args: argparse.Namespace) -> None:
                 # Dataset and -loader parameters
                 bag_size=config.training.bag_size,
                 num_workers=config.training.num_workers,
+                channel_order=config.training.channel_order,
                 # Training paramenters
                 batch_size=config.training.batch_size,
                 max_epochs=config.training.max_epochs,
@@ -148,6 +149,10 @@ def _run_cli(args: argparse.Namespace) -> None:
                 "using the following configuration:\n"
                 f"{yaml.dump(config.crossval.model_dump(mode='json'))}"
             )
+
+            print(f"[DEBUG] Main: config.crossval.channel_order = {config.crossval.channel_order}")
+
+
             categorical_crossval_(
                 output_dir=config.crossval.output_dir,
                 clini_table=config.crossval.clini_table,
@@ -161,6 +166,7 @@ def _run_cli(args: argparse.Namespace) -> None:
                 # Dataset and -loader parameters
                 bag_size=config.crossval.bag_size,
                 num_workers=config.crossval.num_workers,
+                channel_order=config.crossval.channel_order,
                 # Crossval paramenters
                 batch_size=config.crossval.batch_size,
                 max_epochs=config.crossval.max_epochs,

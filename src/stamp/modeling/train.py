@@ -56,6 +56,7 @@ def train_categorical_model_(
     # Dataset and -loader parameters
     bag_size: int,
     num_workers: int,
+    channel_order: list[str],
     # Training paramenters
     batch_size: int,
     max_epochs: int,
@@ -123,6 +124,7 @@ def train_categorical_model_(
         bag_size=bag_size,
         batch_size=batch_size,
         num_workers=num_workers,
+        channel_order=channel_order,
         ground_truth_label=ground_truth_label,
         clini_table=clini_table,
         slide_table=slide_table,
@@ -202,6 +204,7 @@ def setup_model_for_training(
     bag_size: int,
     batch_size: int,
     num_workers: int,
+    channel_order: list[str],
     train_transform: Callable[[torch.Tensor], torch.Tensor] | None,
     use_alibi: bool,
     # Metadata, has no effect on model training
@@ -243,6 +246,8 @@ def setup_model_for_training(
         shuffle=True,
         num_workers=num_workers,
         transform=train_transform,
+        use_multiplex = True,
+        channel_order = channel_order,
     )
     del categories  # Let's not accidentally reuse the original categories
     valid_dl, _ = dataloader_from_patient_data(
@@ -253,6 +258,8 @@ def setup_model_for_training(
         shuffle=False,
         num_workers=num_workers,
         transform=None,
+        use_multiplex = True,
+        channel_order = channel_order,
     )
     if overlap := set(train_patients) & set(valid_patients):
         raise RuntimeError(
