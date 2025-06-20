@@ -302,7 +302,17 @@ class MultiplexFeatureBagDataset(Dataset):
             print(f"[ERROR] Features shapes: {[f.shape for f in features_per_marker]}")
             raise
 
-        return torch.from_numpy(features), torch.from_numpy(coords)
+        # Convert to PyTorch tensors
+        features = torch.from_numpy(features).float()
+        coords = torch.from_numpy(coords).float()
+
+        # Get bag size (number of tiles per marker)
+        bag_size = coords.shape[1]  # == self.n_tiles
+
+        # Get ground truth (ensure patient has this attribute)
+        ground_truth = patient.ground_truth  # Replace with actual attribute name
+
+        return features, coords, bag_size, ground_truth
     
 
 @dataclass

@@ -270,7 +270,7 @@ def setup_model_for_training(
     bags, coords, bag_sizes, targets = cast(
         tuple[Bags, CoordinatesBatch, BagSizes, EncodedTargets], next(iter(train_dl))
     )
-    _, _, dim_feats = bags.shape
+    dim_feats = bags.shape[-1]
 
     # Weigh classes inversely to their occurrence
     category_counts = cast(BagDataset, train_dl.dataset).ground_truths.sum(dim=0)
