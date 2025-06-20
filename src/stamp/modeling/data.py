@@ -236,7 +236,7 @@ class MultiplexFeatureBagDataset(Dataset):
         ordered_files = []
         for marker in self.channel_order:
             for f in feature_files:
-                if marker.lower() in f.name.lower():
+                if marker.lower in f.name.lower():
                     ordered_files.append(f)
                     break
             else:
