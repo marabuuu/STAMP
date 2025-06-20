@@ -232,24 +232,50 @@ class MultiplexFeatureBagDataset(Dataset):
         patient = self.patient_data[idx]
         feature_files = patient.feature_files  # List of PosixPath, one per marker
 
+        # Track available feature dimensions to use for missing markers
+        default_tile_count = self.n_tiles
+        default_feature_dim = None
+
         # Ensure files are ordered according to self.channel_order
         ordered_files = []
-        for marker in self.channel_order:
-            for f in feature_files:
-                if marker.lower in f.name.lower():
-                    ordered_files.append(f)
-                    break
-            else:
-                raise FileNotFoundError(f"No file for marker {marker} in {feature_files}")
+        missing_markers = []
 
+        for marker in self.channel_order:
+            found = False
+            for f in feature_files:
+                if marker.lower() in f.name.lower():
+                    ordered_files.append(f)
+                    found = True
+                    break
+            if not found:
+                missing_markers.append(marker)
+
+        if len(ordered_files) == 0:
+            raise ValueError(f"No marker files found for patient {patient}")
+
+        # Load the available markers first
         features_per_marker = []
         coords_per_marker = []
+
+        # Get the first available file to determine feature dimensions
+        with h5py.File(ordered_files[0], "r") as h5:
+            sample_feats = h5["feats"]  # Get dataset without [:]
+            default_feature_dim = np.array(sample_feats).shape[1]
+            
+        # Load all available markers
         for feature_path in ordered_files:
             with h5py.File(feature_path, "r") as h5:
-                feats = h5["feats"]   # (tile, feature)
-                coords = h5["coords"] # (tile, 2)
+                feats = np.array(h5["feats"])  # Access the dataset directly
+                coords = np.array(h5["coords"])
             features_per_marker.append(feats)
             coords_per_marker.append(coords)
+            
+        # Add zero tensors for missing markers
+        for marker in missing_markers:
+            dummy_feats = np.zeros((default_tile_count, default_feature_dim), dtype=np.float32)
+            dummy_coords = np.zeros((default_tile_count, 2), dtype=np.float32)
+            features_per_marker.append(dummy_feats)
+            coords_per_marker.append(dummy_coords)
 
         features = np.stack(features_per_marker, axis=0)  # (marker, tile, feature)
         coords = np.stack(coords_per_marker, axis=0)      # (marker, tile, 2)
