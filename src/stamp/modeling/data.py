@@ -230,56 +230,79 @@ class MultiplexFeatureBagDataset(Dataset):
 
     def __getitem__(self, idx):
         patient = self.patient_data[idx]
-        feature_files = patient.feature_files  # List of PosixPath, one per marker
+        feature_files = patient.feature_files  # List of PosixPath
 
-        # Track available feature dimensions to use for missing markers
-        default_tile_count = self.n_tiles
-        default_feature_dim = None
-
-        # Ensure files are ordered according to self.channel_order
-        ordered_files = []
-        missing_markers = []
-
+        # Step 1: Collect valid files using case-insensitive substring matching
+        valid_files = {}  # {marker: file_path}
         for marker in self.channel_order:
-            found = False
-            for f in feature_files:
-                if marker.lower() in f.name.lower():
-                    ordered_files.append(f)
-                    found = True
-                    break
-            if not found:
-                missing_markers.append(marker)
+            matched = [f for f in feature_files if marker.lower() in f.name.lower()]
+            if matched:
+                valid_files[marker] = matched[0]  # Take the first match
 
-        if len(ordered_files) == 0:
-            raise ValueError(f"No marker files found for patient {patient}")
+        # Step 2: Check if at least one valid marker exists
+        if not valid_files:
+            raise ValueError(f"No valid markers found for patient {patient}")
 
-        # Load the available markers first
+        # Step 3: Determine feature dimension from the first valid marker
+        first_marker = next(iter(valid_files))
+        with h5py.File(valid_files[first_marker], "r") as h5:
+            # Debug: Print file structure
+            print(f"[DEBUG] Contents of {valid_files[first_marker].name}:")
+            def print_attrs(name, obj):
+                print(f"{name}: {type(obj)}")
+            h5.visititems(print_attrs)
+
+            # Validate dataset exists and is not a group
+            if "feats" not in h5:
+                raise ValueError(f"Dataset 'feats' not found in {valid_files[first_marker].name}")
+            if not isinstance(h5["feats"], h5py.Dataset):
+                raise ValueError(f"'feats' is a group, not a dataset in {valid_files[first_marker].name}")
+
+            default_feature_dim = np.array(h5["feats"]).shape[1]  # Correct: feature vector size
+
+        # Step 4: Process each marker in channel_order
         features_per_marker = []
         coords_per_marker = []
 
-        # Get the first available file to determine feature dimensions
-        with h5py.File(ordered_files[0], "r") as h5:
-            sample_feats = h5["feats"]  # Get dataset without [:]
-            default_feature_dim = np.array(sample_feats).shape[1]
-            
-        # Load all available markers
-        for feature_path in ordered_files:
-            with h5py.File(feature_path, "r") as h5:
-                feats = np.array(h5["feats"])  # Access the dataset directly
-                coords = np.array(h5["coords"])
-            features_per_marker.append(feats)
-            coords_per_marker.append(coords)
-            
-        # Add zero tensors for missing markers
-        for marker in missing_markers:
-            dummy_feats = np.zeros((default_tile_count, default_feature_dim), dtype=np.float32)
-            dummy_coords = np.zeros((default_tile_count, 2), dtype=np.float32)
-            features_per_marker.append(dummy_feats)
-            coords_per_marker.append(dummy_coords)
+        for marker in self.channel_order:
+            if marker in valid_files:
+                # Load real features
+                with h5py.File(valid_files[marker], "r") as h5:
+                    # Validate dataset again
+                    if "feats" not in h5 or not isinstance(h5["feats"], h5py.Dataset):
+                        raise ValueError(f"'feats' is invalid in {valid_files[marker].name}")
+                    feats = np.array(h5["feats"])
+                    coords = np.array(h5["coords"])
+                    assert feats.shape[1] == default_feature_dim, f"Feature dimension mismatch for {marker}"
 
-        features = np.stack(features_per_marker, axis=0)  # (marker, tile, feature)
-        coords = np.stack(coords_per_marker, axis=0)      # (marker, tile, 2)
-        return torch.from_numpy(features).float(), torch.from_numpy(coords).float()
+                    # Truncate/pad to self.n_tiles
+                    if feats.shape[0] > self.n_tiles:
+                        feats = feats[:self.n_tiles]
+                        coords = coords[:self.n_tiles]
+                    elif feats.shape[0] < self.n_tiles:
+                        pad_size = self.n_tiles - feats.shape[0]
+                        feats = np.vstack([feats, np.zeros((pad_size, default_feature_dim), dtype=np.float32)])
+                        coords = np.vstack([coords, np.zeros((pad_size, 2), dtype=np.float32)])
+
+                    features_per_marker.append(feats)
+                    coords_per_marker.append(coords)
+            else:
+                # Use pre-determined default_feature_dim
+                dummy_feats = np.zeros((self.n_tiles, default_feature_dim), dtype=np.float32)
+                dummy_coords = np.zeros((self.n_tiles, 2), dtype=np.float32)
+                features_per_marker.append(dummy_feats)
+                coords_per_marker.append(dummy_coords)
+
+        # Step 5: Stack and return
+        try:
+            features = np.stack(features_per_marker, axis=0)  # (markers, tiles, features)
+            coords = np.stack(coords_per_marker, axis=0)      # (markers, tiles, 2)
+        except ValueError as e:
+            print(f"[ERROR] Failed to stack arrays: {e}")
+            print(f"[ERROR] Features shapes: {[f.shape for f in features_per_marker]}")
+            raise
+
+        return torch.from_numpy(features), torch.from_numpy(coords)
     
 
 @dataclass
