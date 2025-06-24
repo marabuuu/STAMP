@@ -194,10 +194,10 @@ class VisionTransformer(nn.Module):
     @jaxtyped(typechecker=beartype)
     def forward(
         self,
-        bags: Float[Tensor, "batch tile feature"],
+        bags: Float[Tensor, "batch ... feature"],
         *,
-        coords: Float[Tensor, "batch tile 2"],
-        mask: Bool[Tensor, "batch tile"] | None,
+        coords: Float[Tensor, "batch ... 2"],
+        mask: Bool[Tensor, "batch ..."] | None,
     ) -> tuple[Tensor, Any]:
         print("BAGS SHAPE AT FORWARD ENTRY:", bags.shape)
 
