@@ -136,6 +136,7 @@ def _run_cli(args: argparse.Namespace) -> None:
                 filename_label=config.deployment.filename_label,
                 num_workers=config.deployment.num_workers,
                 accelerator=config.deployment.accelerator,
+                channel_order=config.deployment.channel_order,
             )
 
         case "crossval":
