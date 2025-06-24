@@ -97,8 +97,8 @@ def dataloader_from_patient_data(
             patient_data=patient_data,
             channel_order=channel_order,
             n_tiles=bag_size,
+            categories=categories,
         )
-
 
 
         loader = DataLoader(
@@ -217,13 +217,27 @@ class BagDataset(Dataset[tuple[_Bag, _Coordinates, BagSize, _EncodedTarget]]):
 
 @dataclass
 class MultiplexFeatureBagDataset(Dataset):
-    def __init__(self, patient_data, channel_order, n_tiles):
+    def __init__(self, patient_data, channel_order, n_tiles, categories=None):
         self.patient_data = patient_data
         self.channel_order = channel_order
         self.n_tiles = n_tiles
+        self.categories = categories
 
         print(f"[DEBUG] channel_order at init: {channel_order}")
         assert len(channel_order) > 1, "Only one marker found in channel_order!"
+
+        # create one-hot encoded ground truths
+        if self.categories is not None:
+            self.ground_truths = torch.zeros((len(patient_data), len(self.categories)))
+            for idx, patient in enumerate(patient_data):
+                if patient.ground_truth is not None and patient.ground_truth in self.categories:
+                    category_idx = self.categories.index(patient.ground_truth)
+                    self.ground_truths[idx, category_idx] = 1.0
+            print(f"[DEBUG] Created ground_truths tensor with shape {self.ground_truths.shape}")
+            print(f"[DEBUG] Categories: {self.categories}")
+        else:
+            print("[WARNING] No categories provided - ground truths will not be one-hot encoded")
+            self.ground_truths = None
 
     def __len__(self):
         return len(self.patient_data)
@@ -312,8 +326,16 @@ class MultiplexFeatureBagDataset(Dataset):
         # Get ground truth (ensure patient has this attribute)
         ground_truth = patient.ground_truth  # Replace with actual attribute name
 
-        return features, coords, bag_size, ground_truth
-    
+        # With this:
+        if self.ground_truths is not None:
+            return features, coords, bag_size, self.ground_truths[idx]
+        else:
+            # Create a default tensor with zeros when ground_truths is None
+            if self.categories is not None:
+                default_target = torch.zeros(len(self.categories))
+            else:
+                default_target = torch.zeros(1)  # Fallback with single category
+            return features, coords, bag_size, default_target
 
 @dataclass
 class CoordsInfo:
