@@ -110,6 +110,7 @@ class LitVisionTransformer(lightning.LightningModule):
         self,
         bags: Bags,
     ) -> Float[Tensor, "batch logit"]:
+        logits, _ = self.vision_transformer(bags)
         return self.vision_transformer(bags)
 
     def _step(
@@ -134,11 +135,20 @@ class LitVisionTransformer(lightning.LightningModule):
 
         print(f"[DEBUG] step: {step_name}, bags.shape: {bags.shape}, coords.shape: {coords.shape}")
 
-        logits = self.vision_transformer(bags, coords=coords, mask=mask)
+        logits, _ = self.vision_transformer(bags, coords=coords, mask=mask)
 
         # Only compute loss if targets are present (classic)
         if targets is not None:
-            loss = nn.functional.cross_entropy(logits, targets.type_as(logits), weight=self.class_weights.type_as(logits))
+            print("logits.shape:", logits.shape)
+            print("self.class_weights.shape:", self.class_weights.shape)
+
+            # Average logits over all tiles to get slide-level predictions
+            logits_avg = logits.mean(dim=1)  # Shape: [1, 2]
+
+            # Convert targets to indices if one-hot
+            target_indices = targets.argmax(-1) if targets.dim() > 1 else targets
+
+            loss = nn.functional.cross_entropy(logits_avg, target_indices, weight=self.class_weights.type_as(logits))
             self.log(f"{step_name}_loss", 
                      loss,
                      on_step=False,
@@ -199,9 +209,10 @@ class LitVisionTransformer(lightning.LightningModule):
         batch_idx: int = -1,
     ) -> Float[Tensor, "batch logit"]:
         bags, coords, bag_sizes, _ = batch
-        return self.vision_transformer(
-            bags, coords=coords, mask=_mask_from_bags(bags=bags, bag_sizes=bag_sizes)
+        logits, _ = self.vision_transformer(
+        bags, coords=coords, mask=_mask_from_bags(bags=bags, bag_sizes=bag_sizes)
         )
+        return logits
 
     def configure_optimizers(self) -> optim.Optimizer:
         optimizer = optim.Adam(self.parameters(), lr=1e-3)
@@ -210,12 +221,17 @@ class LitVisionTransformer(lightning.LightningModule):
 
 def _mask_from_bags(
     *,
-    bags: Bags,
+    bags: Float[Tensor, "batch ... feature"], 
     bag_sizes: BagSizes,
 ) -> Bool[Tensor, "batch tile"]:
-    max_possible_bag_size = bags.size(1)
-    mask = torch.arange(max_possible_bag_size).type_as(bag_sizes).unsqueeze(0).repeat(
-        len(bags), 1
-    ) >= bag_sizes.unsqueeze(1)
+    if bags.dim() == 4:
+        batch, marker, tile, feature = bags.shape
+        max_possible_bag_size = marker * tile
+    else:
+        batch, tile, feature = bags.shape
+        max_possible_bag_size = tile
 
+    mask = torch.arange(max_possible_bag_size).type_as(bag_sizes).unsqueeze(0).repeat(
+        batch, 1
+    ) >= bag_sizes.unsqueeze(1)
     return mask

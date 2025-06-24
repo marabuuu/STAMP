@@ -45,6 +45,7 @@ def deploy_categorical_model_(
     filename_label: PandasLabel,
     num_workers: int,
     accelerator: str | Accelerator,
+    channel_order: list[str],
 ) -> None:
     models = [
         LitVisionTransformer.load_from_checkpoint(
@@ -112,6 +113,7 @@ def deploy_categorical_model_(
             patient_to_data=patient_to_data,
             num_workers=num_workers,
             accelerator=accelerator,
+            channel_order=channel_order,
         )
         all_predictions.append(predictions)
 
@@ -145,6 +147,7 @@ def _predict(
     patient_to_data: Mapping[PatientId, PatientData[GroundTruth | None]],
     num_workers: int,
     accelerator: str | Accelerator,
+    channel_order: list[str],
 ) -> Mapping[PatientId, Float[torch.Tensor, "category"]]:  # noqa: F821
     model = model.eval()
     torch.set_float32_matmul_precision("medium")
@@ -166,6 +169,7 @@ def _predict(
         shuffle=False,
         num_workers=num_workers,
         transform=None,
+        channel_order= channel_order,
     )
 
     trainer = lightning.Trainer(

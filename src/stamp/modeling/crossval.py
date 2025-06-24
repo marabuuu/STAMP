@@ -194,6 +194,7 @@ def categorical_crossval_(
                 },
                 num_workers=num_workers,
                 accelerator=accelerator,
+                channel_order=channel_order,
             )
 
             _to_prediction_df(

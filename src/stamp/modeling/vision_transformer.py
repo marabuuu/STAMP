@@ -222,7 +222,12 @@ class VisionTransformer(nn.Module):
         bags = bags.reshape(batch_size, n_markers * n_tiles, embedding_dim)  # (batch, sequence, embedding_dim)
         coords = coords.reshape(batch_size, n_markers * n_tiles, 2)  # (batch, sequence, 2)
         if mask is not None:
-            mask = mask.reshape(batch_size, n_markers * n_tiles)  # (batch, sequence)
+            # Ensure mask is [batch_size, n_markers * n_tiles]
+            if mask.numel() != batch_size * n_markers * n_tiles:
+                print(f"[WARNING] Mask shape {mask.shape} does not match expected ({batch_size}, {n_markers * n_tiles}), creating default mask.")
+                mask = torch.ones(batch_size, n_markers * n_tiles, dtype=torch.bool, device=bags.device)
+            else:
+                mask = mask.reshape(batch_size, n_markers * n_tiles)
 
         # Project features to model dimension
         bags = self.project_features(bags)  # (batch, sequence, dim_model)
@@ -269,9 +274,12 @@ class VisionTransformer(nn.Module):
         bags_for_marker_attention = bags_reshaped.permute(0, 1, 3, 2)
 
         # MarkerAttention expects (batch, marker, embedding_dim, n_tiles)
-        marker_attn_out = self.marker_attention(bags_for_marker_attention)
+        marker_attn_out, attn_weights = self.marker_attention(bags_for_marker_attention)
+        print("marker_attn_out shape:", marker_attn_out.shape)
+        print("attn_weights shape:", attn_weights.shape)
+    
 
         # Final MLP head
         logits = self.mlp_head(marker_attn_out)
 
-        return logits, marker_attn_out
+        return logits, (marker_attn_out, attn_weights)
