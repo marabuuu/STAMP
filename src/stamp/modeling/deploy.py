@@ -204,14 +204,15 @@ def _to_prediction_df(
             {
                 patient_label: patient_id,
                 ground_truth_label: patient_to_ground_truth.get(patient_id),
-                "pred": categories[int(prediction.argmax())],
+                # Calculate majority vote for each patient inside the comprehension
+                "pred": categories[int(torch.mode(prediction.argmax(dim=1)).values.item())],
                 **{
-                    f"{ground_truth_label}_{category}": prediction[i_cat].item()
+                    f"{ground_truth_label}_{category}": prediction[:, i_cat].mean().item()
                     for i_cat, category in enumerate(categories)
                 },
                 "loss": (
                     torch.nn.functional.cross_entropy(
-                        prediction.reshape(1, -1),
+                        prediction.mean(dim=0, keepdim=True),  # Average over tiles [1, n_classes]
                         torch.tensor(np.where(np.array(categories) == ground_truth)[0]),
                     ).item()
                     if (ground_truth := patient_to_ground_truth.get(patient_id))

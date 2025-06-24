@@ -203,16 +203,15 @@ class LitVisionTransformer(lightning.LightningModule):
             batch_idx=batch_idx,
         )
 
-    def predict_step(
-        self,
-        batch: tuple[Bags, CoordinatesBatch, BagSizes, EncodedTargets],
-        batch_idx: int = -1,
-    ) -> Float[Tensor, "batch logit"]:
+    def predict_step(self, batch, batch_idx: int = -1) -> Float[Tensor, "batch logit"]:
         bags, coords, bag_sizes, _ = batch
-        logits, _ = self.vision_transformer(
-        bags, coords=coords, mask=_mask_from_bags(bags=bags, bag_sizes=bag_sizes)
-        )
-        return logits
+        
+        # Fix: Call with keyword arguments
+        mask = _mask_from_bags(bags=bags, bag_sizes=bag_sizes)
+        
+        logits, _ = self.vision_transformer(bags, coords=coords, mask=mask)
+        # Average over tiles to match the type hint
+        return logits.mean(dim=1)  # Now returns [batch, classes]
 
     def configure_optimizers(self) -> optim.Optimizer:
         optimizer = optim.Adam(self.parameters(), lr=1e-3)
