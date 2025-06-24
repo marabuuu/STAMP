@@ -157,7 +157,7 @@ class LitVisionTransformer(lightning.LightningModule):
                      sync_dist=True,
             )
             if step_name == "validation":
-                self.valid_auroc.update(logits, targets.long().argmax(-1))
+                self.valid_auroc.update(logits_avg, targets.long().argmax(-1))
                 self.log(
                      f"{step_name}_auroc",
                      self.valid_auroc,
