@@ -71,6 +71,13 @@ def _get_preprocessing_code_hash() -> str:
     return hasher.hexdigest()
 
 
+def to_fake_rgb(image: Image.Image) -> Image.Image:
+    """Convert a grayscale image to fake RGB by duplicating the channel."""
+    if image.mode != "L":
+        image = image.convert("L")
+    return Image.merge("RGB", (image, image, image))
+
+
 class _TileDataset(IterableDataset):
     def __init__(
         self,
@@ -111,7 +118,7 @@ class _TileDataset(IterableDataset):
 
     def __iter__(self) -> Iterator[tuple[Tensor, Microns, Microns]]:
         return (
-            (self.transform(tile.image), tile.coordinates.x, tile.coordinates.y)
+            (self.transform(to_fake_rgb(tile.image)), tile.coordinates.x, tile.coordinates.y)
             for tile in tiles_with_cache(
                 self.slide_path,
                 cache_dir=self.cache_dir,
@@ -358,8 +365,10 @@ def _get_rejection_thumb(
         dtype=bool,
     )
 
+    max_y, max_x = inclusion_map.shape
     for y, x in np.floor(coords_um / tile_size_um).astype(np.uint32):
-        inclusion_map[y, x] = True
+        if y < max_y and x < max_x:
+            inclusion_map[y, x] = True
 
     thumb = slide.get_thumbnail(size).convert("RGBA")
     discarded_im = Image.fromarray(
