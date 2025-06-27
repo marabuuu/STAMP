@@ -24,6 +24,7 @@ preprocessing:
   # Tiler parameters.  The defaults work well for most domains and feature extractors.
   #tile_size_um: 256.0
   #tile_size_px: 224
+  #default_slide_mpp: 0.5
 
   # How many workers to use for tile extraction.  Should be less or equal to
   # the number of cores of your system.
@@ -31,12 +32,12 @@ preprocessing:
 
   # Tiles with an average brightness of more than this value will be excluded
   # from feature extraction.
-  #brightness_cutoff: 240
+  brightness_cutoff: null
+  canny_cutoff: null
 
   # Add a hash of the entire preprocessing codebase in the feature folder name.
   # Used to distinguish features extracted with different code versions.
   #generate_hash: True
-
 
 crossval:
   output_dir: "/path/to/save/files/to"
