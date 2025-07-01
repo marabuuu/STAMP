@@ -30,6 +30,7 @@ from stamp.preprocessing.tiling import (
     TilePixels,
     get_slide_mpp_,
     tiles_with_cache,
+    select_channel_files
 )
 
 __author__ = "Marko van Treeck"
@@ -138,6 +139,9 @@ def extract_(
     *,
     wsi_dir: Path,
     output_dir: Path,
+    channel_order: list[str],
+    dapi_index: int,
+    exclude_bgsub: bool = True,
     cache_dir: Path | None,
     cache_tiles_ext: ImageExtension,
     extractor: ExtractorName | Extractor,
@@ -248,6 +252,8 @@ def extract_(
         for extension in supported_extensions
         for slide_path in wsi_dir.glob(f"**/*{extension}")
     ]
+    if exclude_bgsub:
+        slide_paths = [p for p in slide_paths if "bgsub" not in p.name.lower()]
     # We shuffle so if we run multiple jobs on multiple computers at the same time,
     # They won't interfere with each other too much
     shuffle(slide_paths)
@@ -266,6 +272,22 @@ def extract_(
             continue
 
         feature_output_path.parent.mkdir(parents=True, exist_ok=True)
+
+        sample_folder = slide_path.parent
+        selected_files = select_channel_files(
+            folder=sample_folder,
+            channel_order=channel_order,
+            dapi_index=dapi_index,
+            exclude_bgsub=exclude_bgsub,
+        )
+        
+
+        # Check if this slide is one we actually want to process
+        # Skip if it's not in our selected_files list
+        if slide_path not in selected_files:
+            _logger.debug(f"Skipping {slide_path} - not in selected channel files")
+            continue
+        
 
         try:
             ds = _TileDataset(

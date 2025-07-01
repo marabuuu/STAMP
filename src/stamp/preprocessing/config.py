@@ -31,6 +31,9 @@ class PreprocessingConfig(BaseModel, arbitrary_types_allowed=True):
 
     output_dir: Path
     wsi_dir: Path
+    channel_order: list[str]
+    dapi_index: int
+    exclude_bgsub: bool = True
     cache_dir: Path | None = None
     cache_tiles_ext: ImageExtension = "jpg"
     tile_size_um: Microns = Microns(256.0)
