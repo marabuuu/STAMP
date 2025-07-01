@@ -208,10 +208,9 @@ def _to_prediction_df(
                 "loss": (
                     torch.nn.functional.cross_entropy(
                         prediction.reshape(1, -1),
-                        torch.tensor(np.where(np.array(categories) == ground_truth)[0]),
+                        torch.tensor([categories.index(ground_truth)]),
                     ).item()
-                    if (ground_truth := patient_to_ground_truth.get(patient_id))
-                    is not None
+                    if (ground_truth := patient_to_ground_truth.get(patient_id)) in categories
                     else None
                 ),
             }
