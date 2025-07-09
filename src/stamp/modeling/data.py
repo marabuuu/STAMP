@@ -70,6 +70,8 @@ def dataloader_from_patient_data(
     shuffle: bool,
     num_workers: int,
     transform: Callable[[Tensor], Tensor] | None,
+    channel_order: list[str],  
+    multiplex: bool = True,  
 ) -> tuple[
     DataLoader[tuple[Bags, CoordinatesBatch, BagSizes, EncodedTargets]],
     Sequence[Category],
@@ -77,9 +79,8 @@ def dataloader_from_patient_data(
     """Creates a dataloader from patient data, encoding the ground truths.
 
     Args:
-        categories:
-            Order of classes for one-hot encoding.
-            If `None`, classes are inferred from patient data.
+        channel_order: Order of marker channels when using multiplex=True
+        multiplex: Whether to use MultiplexBagDataset for marker-specific features
     """
 
     raw_ground_truths = np.array([patient.ground_truth for patient in patient_data])
@@ -87,12 +88,26 @@ def dataloader_from_patient_data(
         categories if categories is not None else list(np.unique(raw_ground_truths))
     )
     one_hot = torch.tensor(raw_ground_truths.reshape(-1, 1) == categories)
-    ds = BagDataset(
-        bags=[patient.feature_files for patient in patient_data],
-        bag_size=bag_size,
-        ground_truths=one_hot,
-        transform=transform,
-    )
+
+    if multiplex and channel_order:
+        print(f"[DEBUG] Using multiplex dataset class:")   #{type(ds)}")
+        print(patient_data[0])
+        ds = MultiplexBagDataset(
+            bags=[patient.feature_files for patient in patient_data],
+            channel_order=channel_order,
+            bag_size=bag_size,
+            ground_truths=one_hot,
+            transform=transform,
+        )
+    else:
+        ds = BagDataset(
+            bags=[patient.feature_files for patient in patient_data],
+            bag_size=bag_size,
+            ground_truths=one_hot,
+            transform=transform,
+        )
+
+        print(f"[DEBUG] Using classic dataset class: {type(ds)}")
 
     return (
         cast(
@@ -112,10 +127,21 @@ def dataloader_from_patient_data(
 def _collate_to_tuple(
     items: list[tuple[_Bag, _Coordinates, BagSize, _EncodedTarget]],
 ) -> tuple[Bags, CoordinatesBatch, BagSizes, EncodedTargets]:
-    bags = torch.stack([bag for bag, _, _, _ in items])
-    coords = torch.stack([coord for _, coord, _, _ in items])
+    bags = [bag for bag, _, _, _ in items]
+    coords = [coord for _, coord, _, _ in items]
     bag_sizes = torch.tensor([bagsize for _, _, bagsize, _ in items])
     encoded_targets = torch.stack([encoded_target for _, _, _, encoded_target in items])
+
+    # Handle both standard and multiplex bags
+    if isinstance(bags[0], torch.Tensor) and bags[0].dim() > 2:
+        # Multiplex case - bags are already 3D tensors [markers, positions, features]
+        bags = torch.stack(bags)
+    else:
+        # Standard case
+        bags = torch.stack(bags)
+        
+    # Same for coordinates
+    coords = torch.stack(coords)
 
     return (bags, coords, bag_sizes, encoded_targets)
 
@@ -189,6 +215,208 @@ class BagDataset(Dataset[tuple[_Bag, _Coordinates, BagSize, _EncodedTarget]]):
                 self.ground_truths[index],
             )
 
+@dataclass
+class MultiplexBagDataset(Dataset[tuple[_Bag, _Coordinates, BagSize, _EncodedTarget]]):
+    """A dataset of bags with multiple marker channels.
+    
+    This dataset handles multiple marker channels, possibly missing ones,
+    and stacks them into a 3D tensor (markers, positions, features).
+    """
+
+    _: KW_ONLY
+    bags: Sequence[Iterable[FeaturePath | BinaryIO]]
+    """The `.h5` files containing the bags."""
+
+    channel_order: list[str]
+    """Order of marker channels to use."""
+
+    bag_size: BagSize | None = None
+    """The number of instances in each bag."""
+
+    ground_truths: Bool[Tensor, "index category_is_hot"]
+    """The ground truth for each bag, one-hot encoded."""
+
+    transform: Callable[[Tensor], Tensor] | None = None
+    
+    zero_fill_missing: bool = True
+    """Whether to fill missing marker channels with zeros."""
+    
+    stack_dimension: str = "markers_embedding_first"
+    """How to stack the markers: 
+    'markers_embedding_first' for [markers, embedding, patches] = [m, e, p]
+    'markers_first' for [markers, patches, embedding] = [m, p, e] 
+    'features_first' for [patches, embedding, markers] = [p, e, m]"""
+
+    def __post_init__(self) -> None:
+        if len(self.bags) != len(self.ground_truths):
+            raise ValueError(
+                "the number of ground truths has to match the number of bags"
+            )
+
+    def __len__(self) -> int:
+        return len(self.bags)
+        
+    def _get_marker_from_path(self, path: Path | BinaryIO) -> str:
+        """Extract marker name from file path."""
+        if isinstance(path, Path):
+            path_str = str(path).lower()
+        else:
+            path_str = str(getattr(path, 'name', '')).lower()
+            
+        for marker in self.channel_order:
+            if marker.lower() in path_str:
+                return marker
+        raise ValueError(f"No marker from {self.channel_order} found in path: {path}")
+        
+    def __getitem__(
+        self, index: int
+    ) -> tuple[_Bag, _Coordinates, BagSize, _EncodedTarget]:
+        """Get a bag with features organized by marker channel."""
+        # Track which markers we've found
+        found_markers = set()
+        
+        # First determine the feature dimension from any available file
+        feature_dim = 512  # Default assumption
+        common_size = self.bag_size or 10  # Default size if nothing found
+        
+        # Quick scan for a reference shape
+        for bag_file in self.bags[index]:
+            try:
+                with h5py.File(bag_file, "r") as h5:
+                    if "feats" in h5:
+                        feat_shape = np.array(h5["feats"]).shape
+                        if len(feat_shape) > 1:
+                            feature_dim = feat_shape[1]
+                            if self.bag_size is None:
+                                common_size = feat_shape[0]
+                            else:
+                                common_size = self.bag_size
+                        break
+            except (IOError, KeyError):
+                continue
+        
+        # Initialize with zeros
+        marker_to_features = {
+            marker: torch.zeros((common_size, feature_dim)) 
+            for marker in self.channel_order
+        }
+        marker_to_coords = {
+            marker: torch.zeros((common_size, 2)) 
+            for marker in self.channel_order
+        }
+        
+        # Find files for each marker
+        for bag_file in self.bags[index]:
+            try:
+                marker = self._get_marker_from_path(bag_file)
+            except ValueError:
+                continue
+                
+            if marker not in self.channel_order:
+                continue
+                
+            with h5py.File(bag_file, "r") as h5:
+                features = torch.from_numpy(h5["feats"][:]).float() # pyright: ignore[reportIndexIssue]
+                coords = get_coords(h5).coords_um
+                
+                if self.transform is not None:
+                    features = self.transform(features)
+                
+                marker_to_features[marker] = features
+                marker_to_coords[marker] = coords
+                found_markers.add(marker)
+        
+        # Resize features to common size
+        if self.bag_size is not None:
+            processed_features = []
+            for marker in self.channel_order:
+                features = marker_to_features[marker]
+                
+                # If marker was found, handle size constraints
+                if marker in found_markers:
+                    if len(features) > self.bag_size:
+                        # Random sampling
+                        indices = torch.randperm(len(features))[:self.bag_size]
+                        features = features[indices]
+                    elif len(features) < self.bag_size:
+                        # Zero padding
+                        padded = torch.zeros((self.bag_size, features.shape[1]))
+                        padded[:len(features)] = features
+                        features = padded
+                # If marker wasn't found, keep zeroes from initialization
+                    
+                processed_features.append(features)
+                
+            # Get common coordinates
+            if found_markers:
+                ref_marker = next(iter(found_markers))
+                coords = marker_to_coords[ref_marker]
+                if len(coords) > self.bag_size:
+                    indices = torch.randperm(len(coords))[:self.bag_size]
+                    coords = coords[indices]
+                elif len(coords) < self.bag_size:
+                    padded = torch.zeros((self.bag_size, coords.shape[1]))
+                    padded[:len(coords)] = coords
+                    coords = padded
+            else:
+                coords = torch.zeros((self.bag_size, 2))
+                
+            # Stack features by marker: [markers, tiles, features]
+            stacked_features = torch.stack(processed_features)  # [markers, tiles, features]
+            # Permute to [tiles, markers, features]
+            stacked_features = stacked_features.permute(1, 0, 2)  # [tiles, markers, features]
+            # Flatten markers and features into a single feature dimension
+            n_tiles, n_markers, n_features = stacked_features.shape
+            stacked_features = stacked_features.reshape(n_tiles, n_markers * n_features)  # [tiles, markers*features]
+
+            return stacked_features, coords, self.bag_size, self.ground_truths[index]
+        
+        else:
+            # Variable bag size - handle accordingly
+            # Determine the common size from found markers
+            if found_markers:
+                common_size = min(len(marker_to_features[m]) for m in found_markers)
+            
+            # Adjust all features to common size
+            processed_features = []
+            for marker in self.channel_order:
+                features = marker_to_features[marker]
+                
+                if marker in found_markers:
+                    if len(features) > common_size:
+                        features = features[:common_size]
+                    elif len(features) < common_size:
+                        padded = torch.zeros((common_size, features.shape[1]))
+                        padded[:len(features)] = features
+                        features = padded
+                else:
+                    # For missing markers, create zeros of appropriate size
+                    features = torch.zeros((common_size, feature_dim))
+                    
+                processed_features.append(features)
+            
+            # Get common coordinates
+            if found_markers:
+                ref_marker = next(iter(found_markers))
+                coords = marker_to_coords[ref_marker]
+                if len(coords) > common_size:
+                    coords = coords[:common_size]
+                elif len(coords) < common_size:
+                    padded = torch.zeros((common_size, coords.shape[1]))
+                    padded[:len(coords)] = coords
+                    coords = padded
+            else:
+                coords = torch.zeros((common_size, 2))
+            
+            # Stack features by marker: [markers, tiles, features]
+            stacked_features = torch.stack(processed_features)  # [markers, tiles, features]
+            # Permute to [tiles, markers, features]
+            stacked_features = stacked_features.permute(1, 0, 2)  # [tiles, markers, features]
+            # Flatten markers and features into a single feature dimension
+            n_tiles, n_markers, n_features = stacked_features.shape
+            stacked_features = stacked_features.reshape(n_tiles, n_markers * n_features)  # [tiles, markers*features]
+
+            return stacked_features, coords, common_size, self.ground_truths[index]
 
 @dataclass
 class CoordsInfo:
