@@ -92,7 +92,7 @@ crossval:
 
   # Use ALiBi positional embedding
   # use_alibi: true
-
+  use_multiplex: true
 
 
 training:
