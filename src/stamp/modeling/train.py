@@ -70,6 +70,8 @@ def train_categorical_model_(
     # Experimental features
     use_vary_precision_transform: bool,
     use_alibi: bool,
+    channel_order: list[str],
+    use_multiplex: bool = True,
 ) -> None:
     """Trains a model.
 
@@ -139,6 +141,8 @@ def train_categorical_model_(
             else None
         ),
         use_alibi=use_alibi,
+        channel_order=channel_order,
+        use_multiplex=use_multiplex,
     )
     train_model_(
         output_dir=output_dir,
@@ -211,6 +215,8 @@ def setup_model_for_training(
     train_transform: Callable[[torch.Tensor], torch.Tensor] | None,
     use_alibi: bool,
     # Metadata, has no effect on model training
+    channel_order: list[str],
+    use_multiplex: bool = True,
     ground_truth_label: PandasLabel,
     clini_table: Path,
     slide_table: Path,
@@ -249,6 +255,8 @@ def setup_model_for_training(
         shuffle=True,
         num_workers=num_workers,
         transform=train_transform,
+        channel_order=channel_order,
+        multiplex=use_multiplex,
     )
     del categories  # Let's not accidentally reuse the original categories
     valid_dl, _ = dataloader_from_patient_data(
@@ -259,6 +267,8 @@ def setup_model_for_training(
         shuffle=False,
         num_workers=num_workers,
         transform=None,
+        channel_order=channel_order,
+        multiplex=True,
     )
     if overlap := set(train_patients) & set(valid_patients):
         raise RuntimeError(
@@ -269,7 +279,7 @@ def setup_model_for_training(
     bags, coords, bag_sizes, targets = cast(
         tuple[Bags, CoordinatesBatch, BagSizes, EncodedTargets], next(iter(train_dl))
     )
-    _, _, dim_feats = bags.shape
+    dim_feats = bags.shape[-1]
 
     # Weigh classes inversely to their occurrence
     category_counts = cast(BagDataset, train_dl.dataset).ground_truths.sum(dim=0)

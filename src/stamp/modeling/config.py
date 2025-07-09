@@ -40,6 +40,12 @@ class TrainConfig(BaseModel):
     use_vary_precision_transform: bool = False
     use_alibi: bool = False
 
+    # Multiplex parameters
+    channel_order: list[str]
+    use_multiplex: bool = True
+    use_marker_attention: bool = True
+    marker_hidden_dim: int = 256
+
 
 class CrossvalConfig(TrainConfig):
     n_splits: int = Field(5, ge=2)
@@ -60,4 +66,5 @@ class DeploymentConfig(BaseModel):
     filename_label: PandasLabel = "FILENAME"
 
     num_workers: int = min(os.cpu_count() or 1, 16)
+    channel_order: list[str]
     accelerator: str = "gpu" if torch.cuda.is_available() else "cpu"

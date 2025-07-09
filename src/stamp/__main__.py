@@ -104,6 +104,7 @@ def _run_cli(args: argparse.Namespace) -> None:
                 # Dataset and -loader parameters
                 bag_size=config.training.bag_size,
                 num_workers=config.training.num_workers,
+                channel_order=config.training.channel_order,
                 # Training paramenters
                 batch_size=config.training.batch_size,
                 max_epochs=config.training.max_epochs,
@@ -135,6 +136,7 @@ def _run_cli(args: argparse.Namespace) -> None:
                 patient_label=config.deployment.patient_label,
                 filename_label=config.deployment.filename_label,
                 num_workers=config.deployment.num_workers,
+                channel_order=config.deployment.channel_order,
                 accelerator=config.deployment.accelerator,
             )
 
@@ -162,6 +164,7 @@ def _run_cli(args: argparse.Namespace) -> None:
                 # Dataset and -loader parameters
                 bag_size=config.crossval.bag_size,
                 num_workers=config.crossval.num_workers,
+                channel_order=config.crossval.channel_order,
                 # Crossval paramenters
                 batch_size=config.crossval.batch_size,
                 max_epochs=config.crossval.max_epochs,
