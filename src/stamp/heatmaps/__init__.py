@@ -12,6 +12,10 @@ from jaxtyping import Float, Integer
 from matplotlib.axes import Axes
 from matplotlib.patches import Patch
 from PIL import Image
+import torch.serialization
+from packaging.version import Version, _Version
+from packaging._structures import InfinityType, NegativeInfinityType
+from pathlib import Path, PosixPath
 from torch import Tensor
 from torch._prims_common import DeviceLikeType
 from torch.func import jacrev  # pyright: ignore[reportPrivateImportUsage]
@@ -21,6 +25,10 @@ from stamp.modeling.lightning_model import LitVisionTransformer
 from stamp.modeling.vision_transformer import VisionTransformer
 from stamp.preprocessing import supported_extensions
 from stamp.preprocessing.tiling import Microns, SlideMPP, TilePixels, get_slide_mpp_
+
+torch.serialization.add_safe_globals([
+    Version, _Version, InfinityType, NegativeInfinityType, PosixPath 
+])
 
 _logger = logging.getLogger("stamp")
 
