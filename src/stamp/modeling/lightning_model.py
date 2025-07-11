@@ -76,6 +76,8 @@ class LitVisionTransformer(lightning.LightningModule):
         train_patients: Iterable[PatientId],
         valid_patients: Iterable[PatientId],
         stamp_version: Version = Version(stamp.__version__),
+        use_marker_attention: bool = True,
+        marker_hidden_dim: int = 256,
         # Other metadata
         **metadata,
     ) -> None:
@@ -95,6 +97,8 @@ class LitVisionTransformer(lightning.LightningModule):
             dim_feedforward=dim_feedforward,
             dropout=dropout,
             use_alibi=use_alibi,
+            use_marker_attention=use_marker_attention,
+            marker_hidden_dim=marker_hidden_dim,
         )
         self.class_weights = category_weights
         self.valid_auroc = MulticlassAUROC(len(categories))
@@ -214,9 +218,15 @@ def _mask_from_bags(
     bags: Bags,
     bag_sizes: BagSizes,
 ) -> Bool[Tensor, "batch tile"]:
-    max_possible_bag_size = bags.size(1)
+    # For multiplex: bags.shape = [batch, marker, embedding, patch]
+    # For classic:   bags.shape = [batch, tile, feature]
+    if bags.dim() == 4:
+        # Multiplex: mask should be [batch, patch]
+        max_possible_bag_size = bags.size(-1)
+    else:
+        # Classic: mask should be [batch, tile]
+        max_possible_bag_size = bags.size(1)
     mask = torch.arange(max_possible_bag_size).type_as(bag_sizes).unsqueeze(0).repeat(
         len(bags), 1
     ) >= bag_sizes.unsqueeze(1)
-
     return mask

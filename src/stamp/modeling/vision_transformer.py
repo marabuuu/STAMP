@@ -12,6 +12,7 @@ from jaxtyping import Bool, Float, jaxtyped
 from torch import Tensor, nn
 
 from stamp.modeling.alibi import MultiHeadALiBi
+from fluoroformer.layers import MarkerAttention
 
 
 def feed_forward(
@@ -167,9 +168,23 @@ class VisionTransformer(nn.Module):
         dim_feedforward: int,
         dropout: float,
         use_alibi: bool,
+        use_marker_attention: bool = True,
+        marker_hidden_dim: int = 256,
     ) -> None:
         super().__init__()
         self.class_token = nn.Parameter(torch.randn(dim_model))
+
+        # Add marker attention module only if needed
+        self.use_marker_attention = use_marker_attention
+        print(f"[DEBUG] Using MARKER ATTENTION:")
+        if use_marker_attention:
+            self.marker_attention = MarkerAttention(
+                embedding_dim=dim_input,
+                hidden_dim=marker_hidden_dim,
+                num_heads=1,
+                dropout=dropout
+            )
+            
 
         self.project_features = nn.Sequential(
             nn.Linear(dim_input, dim_model, bias=True),
@@ -191,25 +206,38 @@ class VisionTransformer(nn.Module):
     @jaxtyped(typechecker=beartype)
     def forward(
         self,
-        bags: Float[Tensor, "batch tile feature"],
+        bags: Float[Tensor, "batch tile feature"] | Float[Tensor, "batch marker embedding patch"],
         *,
         coords: Float[Tensor, "batch tile 2"],
-        mask: Bool[Tensor, "batch tile"] | None,
+        mask: Bool[Tensor, "batch tile"] | None = None,
     ) -> Float[Tensor, "batch logit"]:
-        batch_size, _n_tiles, _n_features = bags.shape
+        # Handle multiplex data format if marker attention is enabled
+        print(f"[DEBUG] use_marker_attention: {self.use_marker_attention}")
+        print(f"[DEBUG] bags.shape at entry: {bags.shape}, bags.dim(): {bags.dim()}")
+        if self.use_marker_attention and bags.dim() == 4:
+            # Input is [batch, marker, embedding, patch]
+            batch_size = bags.shape[0]
+            
+            # Apply marker attention
+            # Returns [batch, patch, embedding]
+            bags, attn = self.marker_attention(bags)
+            print(f"[DEBUG] marker_attention output: bags.shape={bags.shape}, attn.shape={attn.shape}")
+            print(f"[DEBUG] marker_attention attn: {attn}")
+            
+        # Now process as standard input with shape [batch, tile, feature]
+        batch_size, n_tiles, n_features = bags.shape
 
-        # Map input sequence to latent space of TransMIL
+        # Map input sequence to latent space
         bags = self.project_features(bags)
 
-        # Prepend a class token to every bag,
-        # include it in the mask.
-        # TODO should the tiles be able to refer to the class token? Test!
+        # Prepend a class token to every bag
         cls_tokens = repeat(self.class_token, "d -> b 1 d", b=batch_size)
         bags = torch.cat([cls_tokens, bags], dim=1)
         coords = torch.cat(
             [torch.zeros(batch_size, 1, 2).type_as(coords), coords], dim=1
         )
 
+        # The rest of the method stays exactly the same
         match mask:
             case None:
                 bags = self.transformer(
