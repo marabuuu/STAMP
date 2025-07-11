@@ -132,19 +132,16 @@ def _collate_to_tuple(
     bag_sizes = torch.tensor([bagsize for _, _, bagsize, _ in items])
     encoded_targets = torch.stack([encoded_target for _, _, _, encoded_target in items])
 
-    # Handle both standard and multiplex bags
-    if isinstance(bags[0], torch.Tensor) and bags[0].dim() > 2:
-        # Multiplex case - bags are already 3D tensors [markers, positions, features]
-        bags = torch.stack(bags)
+    # Multiplex case: bags are 3D tensors [markers, embedding, tiles]
+    if isinstance(bags[0], torch.Tensor) and bags[0].dim() == 3:
+        # Stack to [batch, marker, embedding, patch]
+        bags = torch.stack(bags)  # [batch, marker, embedding, patch]
     else:
         # Standard case
         bags = torch.stack(bags)
         
-    # Same for coordinates
     coords = torch.stack(coords)
-
     return (bags, coords, bag_sizes, encoded_targets)
-
 
 @dataclass
 class BagDataset(Dataset[tuple[_Bag, _Coordinates, BagSize, _EncodedTarget]]):
@@ -364,10 +361,7 @@ class MultiplexBagDataset(Dataset[tuple[_Bag, _Coordinates, BagSize, _EncodedTar
             # Stack features by marker: [markers, tiles, features]
             stacked_features = torch.stack(processed_features)  # [markers, tiles, features]
             # Permute to [tiles, markers, features]
-            stacked_features = stacked_features.permute(1, 0, 2)  # [tiles, markers, features]
-            # Flatten markers and features into a single feature dimension
-            n_tiles, n_markers, n_features = stacked_features.shape
-            stacked_features = stacked_features.reshape(n_tiles, n_markers * n_features)  # [tiles, markers*features]
+            stacked_features = stacked_features.permute(0, 2, 1)  # [markers, features, tiles]
 
             return stacked_features, coords, self.bag_size, self.ground_truths[index]
         
@@ -411,10 +405,7 @@ class MultiplexBagDataset(Dataset[tuple[_Bag, _Coordinates, BagSize, _EncodedTar
             # Stack features by marker: [markers, tiles, features]
             stacked_features = torch.stack(processed_features)  # [markers, tiles, features]
             # Permute to [tiles, markers, features]
-            stacked_features = stacked_features.permute(1, 0, 2)  # [tiles, markers, features]
-            # Flatten markers and features into a single feature dimension
-            n_tiles, n_markers, n_features = stacked_features.shape
-            stacked_features = stacked_features.reshape(n_tiles, n_markers * n_features)  # [tiles, markers*features]
+            stacked_features = stacked_features.permute(0, 2, 1)  # [markers, features, tiles]
 
             return stacked_features, coords, common_size, self.ground_truths[index]
 
