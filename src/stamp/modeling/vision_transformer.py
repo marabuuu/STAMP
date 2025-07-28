@@ -3,7 +3,7 @@ In parts from https://github.com/lucidrains/vit-pytorch/blob/main/vit_pytorch/vi
 """
 
 from collections.abc import Iterable
-from typing import assert_never, cast
+from typing import assert_never, cast, Any
 
 import torch
 from beartype import beartype
@@ -178,12 +178,16 @@ class VisionTransformer(nn.Module):
         self.use_marker_attention = use_marker_attention
         print(f"[DEBUG] Using MARKER ATTENTION:")
         if use_marker_attention:
+            print(f"[DEBUG] Using MARKER ATTENTION with dim_input={dim_input}")
+            # Make sure pre_projection uses the right input dimension (1536)
+            self.pre_projection = nn.Linear(1536, 512)  # Hard-code the input dimension to match data
             self.marker_attention = MarkerAttention(
-                embedding_dim=dim_input,
+                embedding_dim=512,
                 hidden_dim=marker_hidden_dim,
                 num_heads=1,
                 dropout=dropout
-            )
+    )
+    
             
 
         self.project_features = nn.Sequential(
@@ -210,17 +214,26 @@ class VisionTransformer(nn.Module):
         *,
         coords: Float[Tensor, "batch tile 2"],
         mask: Bool[Tensor, "batch tile"] | None = None,
-    ) -> Float[Tensor, "batch logit"]:
+        return_marker_attention: bool = False,
+    ) -> Tensor | tuple[Tensor, Any]:
         # Handle multiplex data format if marker attention is enabled
         print(f"[DEBUG] use_marker_attention: {self.use_marker_attention}")
         print(f"[DEBUG] bags.shape at entry: {bags.shape}, bags.dim(): {bags.dim()}")
+        attn = None
         if self.use_marker_attention and bags.dim() == 4:
             # Input is [batch, marker, embedding, patch]
-            batch_size = bags.shape[0]
+            batch_size, n_markers, embedding_dim, n_patches = bags.shape
             
-            # Apply marker attention
-            # Returns [batch, patch, embedding]
-            bags, attn = self.marker_attention(bags)
+            # Need to project from embedding_dim (1536) to 512 before marker attention
+            # Reshape to apply linear projection
+            bags_reshaped = bags.permute(0, 1, 3, 2).reshape(-1, embedding_dim)
+            projected_bags = self.pre_projection(bags_reshaped)
+            
+            # Reshape back to [batch, marker, 512, patch]
+            projected_bags = projected_bags.reshape(batch_size, n_markers, n_patches, 512).permute(0, 1, 3, 2)
+            
+            # Now apply marker attention
+            bags, attn = self.marker_attention(projected_bags)
             print(f"[DEBUG] marker_attention output: bags.shape={bags.shape}, attn.shape={attn.shape}")
             print(f"[DEBUG] marker_attention attn: {attn}")
             
@@ -268,5 +281,8 @@ class VisionTransformer(nn.Module):
 
         # Only take class token
         bags = bags[:, 0]
+        logits = self.mlp_head(bags)
 
-        return self.mlp_head(bags)
+        if return_marker_attention:
+            return logits, attn
+        return logits
