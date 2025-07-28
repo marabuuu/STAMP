@@ -273,7 +273,7 @@ class MultiplexBagDataset(Dataset[tuple[_Bag, _Coordinates, BagSize, _EncodedTar
         found_markers = set()
         
         # First determine the feature dimension from any available file
-        feature_dim = 512  # Default assumption
+        feature_dim = 1536  # Default assumption for UNI embeddings
         common_size = self.bag_size or 10  # Default size if nothing found
         
         # Quick scan for a reference shape
