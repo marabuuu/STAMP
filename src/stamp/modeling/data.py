@@ -35,6 +35,7 @@ Category: TypeAlias = str
 
 # One instance
 _Bag: TypeAlias = Float[Tensor, "tile feature"]
+_MultiplexBag: TypeAlias = Float[Tensor, "marker feature tile"]  # 3D tensor for multiplex data
 BagSize: TypeAlias = int
 _EncodedTarget: TypeAlias = Bool[Tensor, "category_is_hot"]  # noqa: F821
 """The ground truth, encoded numerically (currently: one-hot)"""
@@ -43,6 +44,7 @@ _Coordinates: TypeAlias = Float[Tensor, "tile 2"]
 # A batch of the above
 Bags: TypeAlias = Float[Tensor, "batch tile feature"]
 BagSizes: TypeAlias = Integer[Tensor, "batch"]  # noqa: F821
+MultiplexBags: TypeAlias = Float[Tensor, "batch marker feature tile"]
 EncodedTargets: TypeAlias = Bool[Tensor, "batch category_is_hot"]
 """The ground truth, encoded numerically (currently: one-hot)"""
 CoordinatesBatch: TypeAlias = Float[Tensor, "batch tile 2"]
@@ -125,8 +127,8 @@ def dataloader_from_patient_data(
 
 
 def _collate_to_tuple(
-    items: list[tuple[_Bag, _Coordinates, BagSize, _EncodedTarget]],
-) -> tuple[Bags, CoordinatesBatch, BagSizes, EncodedTargets]:
+    items: list[tuple[_Bag | _MultiplexBag, _Coordinates, BagSize, _EncodedTarget]],
+) -> tuple[Bags | MultiplexBags, CoordinatesBatch, BagSizes, EncodedTargets]:
     bags = [bag for bag, _, _, _ in items]
     coords = [coord for _, coord, _, _ in items]
     bag_sizes = torch.tensor([bagsize for _, _, bagsize, _ in items])
@@ -213,7 +215,7 @@ class BagDataset(Dataset[tuple[_Bag, _Coordinates, BagSize, _EncodedTarget]]):
             )
 
 @dataclass
-class MultiplexBagDataset(Dataset[tuple[_Bag, _Coordinates, BagSize, _EncodedTarget]]):
+class MultiplexBagDataset(Dataset[tuple[_MultiplexBag, _Coordinates, BagSize, _EncodedTarget]]):
     """A dataset of bags with multiple marker channels.
     
     This dataset handles multiple marker channels, possibly missing ones,
@@ -267,7 +269,7 @@ class MultiplexBagDataset(Dataset[tuple[_Bag, _Coordinates, BagSize, _EncodedTar
         
     def __getitem__(
         self, index: int
-    ) -> tuple[_Bag, _Coordinates, BagSize, _EncodedTarget]:
+    ) -> tuple[_MultiplexBag, _Coordinates, BagSize, _EncodedTarget]:
         """Get a bag with features organized by marker channel."""
         # Track which markers we've found
         found_markers = set()
@@ -402,9 +404,9 @@ class MultiplexBagDataset(Dataset[tuple[_Bag, _Coordinates, BagSize, _EncodedTar
             else:
                 coords = torch.zeros((common_size, 2))
             
-            # Stack features by marker: [markers, tiles, features]
+            # Stack features by marker
             stacked_features = torch.stack(processed_features)  # [markers, tiles, features]
-            # Permute to [tiles, markers, features]
+            # Permute 
             stacked_features = stacked_features.permute(0, 2, 1)  # [markers, features, tiles]
 
             return stacked_features, coords, common_size, self.ground_truths[index]
