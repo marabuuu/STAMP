@@ -6,6 +6,7 @@ from dataclasses import KW_ONLY, dataclass
 from itertools import groupby
 from pathlib import Path
 from typing import BinaryIO, Generic, NewType, TextIO, TypeAlias, TypeVar, cast
+from io import BytesIO
 
 import h5py
 import numpy as np
@@ -30,7 +31,7 @@ __license__ = "MIT"
 PatientId: TypeAlias = str
 GroundTruth: TypeAlias = str
 FeaturePath = NewType("FeaturePath", Path)
-
+FileInput: TypeAlias = Path | BinaryIO | BytesIO
 Category: TypeAlias = str
 
 # One instance
@@ -60,7 +61,7 @@ class PatientData(Generic[GroundTruthType]):
 
     _ = KW_ONLY
     ground_truth: GroundTruthType
-    feature_files: Iterable[FeaturePath | BinaryIO]
+    feature_files: Iterable[FileInput]
 
 
 def dataloader_from_patient_data(
@@ -75,7 +76,7 @@ def dataloader_from_patient_data(
     channel_order: list[str],  
     multiplex: bool = True,  
 ) -> tuple[
-    DataLoader[tuple[Bags, CoordinatesBatch, BagSizes, EncodedTargets]],
+    DataLoader[tuple[Bags | MultiplexBags, CoordinatesBatch, BagSizes, EncodedTargets]],
     Sequence[Category],
 ]:
     """Creates a dataloader from patient data, encoding the ground truths.
@@ -110,10 +111,12 @@ def dataloader_from_patient_data(
         )
 
         print(f"[DEBUG] Using classic dataset class: {type(ds)}")
+        print(f"[DEBUG] multiplex={multiplex}, channel_order={channel_order}")
+        print(f"[DEBUG] Using dataset: {type(ds)}")
 
     return (
         cast(
-            DataLoader[tuple[Bags, CoordinatesBatch, BagSizes, EncodedTargets]],
+            DataLoader[tuple[Bags | MultiplexBags, CoordinatesBatch, BagSizes, EncodedTargets]],
             DataLoader(
                 ds,
                 batch_size=batch_size,
@@ -136,13 +139,15 @@ def _collate_to_tuple(
 
     # Multiplex case: bags are 3D tensors [markers, embedding, tiles]
     if isinstance(bags[0], torch.Tensor) and bags[0].dim() == 3:
-        # Stack to [batch, marker, embedding, patch]
-        bags = torch.stack(bags)  # [batch, marker, embedding, patch]
+        # Stack 
+        bags = torch.stack(bags)  # [batch, marker, tiles, features]
+        bags = bags.permute(0, 1, 3, 2)  # [batch, marker, features, tiles]
     else:
         # Standard case
         bags = torch.stack(bags)
         
     coords = torch.stack(coords)
+    print(f"[DEBUG] bags[0] shape: {bags[0].shape}")
     return (bags, coords, bag_sizes, encoded_targets)
 
 @dataclass
@@ -150,7 +155,7 @@ class BagDataset(Dataset[tuple[_Bag, _Coordinates, BagSize, _EncodedTarget]]):
     """A dataset of bags of instances."""
 
     _: KW_ONLY
-    bags: Sequence[Iterable[FeaturePath | BinaryIO]]
+    bags: Sequence[Iterable[FileInput]]
     """The `.h5` files containing the bags.
 
     Each bag consists of the features taken from one or multiple h5 files.
@@ -223,7 +228,7 @@ class MultiplexBagDataset(Dataset[tuple[_MultiplexBag, _Coordinates, BagSize, _E
     """
 
     _: KW_ONLY
-    bags: Sequence[Iterable[FeaturePath | BinaryIO]]
+    bags: Sequence[Iterable[FileInput]]
     """The `.h5` files containing the bags."""
 
     channel_order: list[str]
@@ -255,7 +260,7 @@ class MultiplexBagDataset(Dataset[tuple[_MultiplexBag, _Coordinates, BagSize, _E
     def __len__(self) -> int:
         return len(self.bags)
         
-    def _get_marker_from_path(self, path: Path | BinaryIO) -> str:
+    def _get_marker_from_path(self, path: FileInput) -> str:
         """Extract marker name from file path."""
         if isinstance(path, Path):
             path_str = str(path).lower()
@@ -362,8 +367,9 @@ class MultiplexBagDataset(Dataset[tuple[_MultiplexBag, _Coordinates, BagSize, _E
                 
             # Stack features by marker: [markers, tiles, features]
             stacked_features = torch.stack(processed_features)  # [markers, tiles, features]
-            # Permute to [tiles, markers, features]
-            stacked_features = stacked_features.permute(0, 2, 1)  # [markers, features, tiles]
+
+            print(f"[DEBUG] stacked_features shape: {stacked_features.shape}")
+
 
             return stacked_features, coords, self.bag_size, self.ground_truths[index]
         
@@ -406,8 +412,8 @@ class MultiplexBagDataset(Dataset[tuple[_MultiplexBag, _Coordinates, BagSize, _E
             
             # Stack features by marker
             stacked_features = torch.stack(processed_features)  # [markers, tiles, features]
-            # Permute 
-            stacked_features = stacked_features.permute(0, 2, 1)  # [markers, features, tiles]
+
+            print(f"[DEBUG] stacked_features shape: {stacked_features.shape}")
 
             return stacked_features, coords, common_size, self.ground_truths[index]
 
