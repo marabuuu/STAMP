@@ -2,7 +2,7 @@ preprocessing:
   output_dir: "/path/to/save/files/to"
   wsi_dir: "/path/containing/whole/slide/images/to/extract/features/from"
   channel_order: ["list", "of", "markers"]  # e.g. ["CD3", "CD8", "CD20", "DAPI"]
-  dapi_index: 2 # Use the third DAPI file (0-based index)
+  dapi_index: 1 # Use the second DAPI file (0-based index)
   exclude_bgsub: true # exclude all files that are already background-subtracted
   # Extractor to use for feature extractor.  Possible options are "ctranspath",
   # "mahmood-uni", "mahmood-conch", "chief-ctranspath", "mahmood-conch1_5",

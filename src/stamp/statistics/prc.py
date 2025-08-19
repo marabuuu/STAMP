@@ -188,4 +188,4 @@ def plot_multiple_decorated_precision_recall_curves(
     else:
         ax.set_title(auc_str)
 
-    return lower, upper
+    return float(lower), float(upper)
