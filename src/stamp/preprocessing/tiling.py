@@ -27,6 +27,7 @@ import numpy as np
 import numpy.typing as npt
 import openslide
 from PIL import Image
+from skimage.filters import threshold_otsu
 
 __author__ = "Marko van Treeck"
 __copyright__ = "Copyright (C) 2022-2025 Marko van Treeck"
@@ -192,7 +193,7 @@ def _tiles_with_tissue(
     canny_cutoff: float | None,
     default_slide_mpp: SlideMPP | None,
 ) -> Iterator[_Tile[Microns]]:
-    """Yields all tiels from a WSI which (probably) show tissue"""
+    """Yields all tiles from a WSI which (probably) show tissue"""
     for tile in _tiles(
         slide=slide,
         tile_size_um=tile_size_um,
@@ -317,7 +318,7 @@ def _supertiles(
     slide_mpp = cast(SlideMPP, get_slide_mpp_(slide, default_mpp=default_slide_mpp))
 
     # We calculate the `supertile_slide_px` such that they can hold a whole number of tiles
-    # which, before scaling down, is still less than `max_supertile_slide_px`
+    # which, before scaling down, is still less than `max_supertile_size_slide_px`
     max_supertile_um = max_supertile_size_slide_px * slide_mpp
     len_of_supertile_in_tiles = max(int(max_supertile_um // tile_size_um), 1)
 
@@ -342,7 +343,7 @@ def _supertiles(
                         (supertile_size_slide_px, supertile_size_slide_px),
                     )
                     .resize((supertile_size_tile_px, supertile_size_tile_px))
-                    .convert("RGB"),
+                    .convert("L"),
                     coordinates=_XYCoords(
                         x=Microns(x_slide_px * slide_mpp),
                         y=Microns(y_slide_px * slide_mpp),
@@ -515,3 +516,52 @@ def _extract_mpp_from_metadata(slide: openslide.AbstractSlide) -> SlideMPP | Non
         _logger.exception("failed to extract MPP from image description")
         return None
     return SlideMPP(mpp)
+
+def get_dapi_file(files: list[Path]) -> Path | None:
+    for f in files:
+        if "dapi" in f.name.lower():
+            return f
+    return None
+
+def threshold_dapi(image_path: Path) -> np.ndarray:
+    """
+    Threshold the DAPI image using Otsu's method.
+    Returns a boolean mask where foreground is True.
+    """
+    im = Image.open(image_path).convert("L")
+    arr = np.array(im)
+    thresh = threshold_otsu(arr)
+    mask = arr > thresh  # foreground: True, background: False
+    return mask
+
+def filter_tiles_by_mask(
+    tiles: Iterator[_Tile], mask: np.ndarray, tile_size_px: int, slide_mpp: float
+) -> Iterator[_Tile]:
+    for tile in tiles:
+        x_px = int(tile.coordinates.x / slide_mpp)
+        y_px = int(tile.coordinates.y / slide_mpp)
+        tile_mask = mask[y_px:y_px+tile_size_px, x_px:x_px+tile_size_px]
+        if np.any(tile_mask):
+            yield tile
+
+def apply_mask_to_channels(channel_files: list[Path], mask: np.ndarray) -> dict[str, np.ndarray]:
+    result = {}
+    for channel_file in channel_files:
+        im = Image.open(channel_file)
+        arr = np.array(im)
+        height, width = arr.shape[:2]
+        mask_resized = np.array(
+            Image.fromarray(mask).resize((width, height), resample=Image.Resampling.NEAREST)
+        )
+        if arr.ndim == 3:
+            arr_masked = arr * mask_resized[..., None]
+        else:
+            arr_masked = arr * mask_resized
+        result[channel_file.name] = arr_masked
+    return result
+
+def to_fake_rgb(image: Image.Image) -> Image.Image:
+    """Convert a grayscale image to fake RGB by duplicating the channel."""
+    if image.mode != "L":
+        image = image.convert("L")
+    return Image.merge("RGB", (image, image, image))

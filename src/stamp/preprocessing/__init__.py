@@ -30,8 +30,12 @@ from stamp.preprocessing.tiling import (
     TilePixels,
     get_slide_mpp_,
     tiles_with_cache,
-    select_channel_files
-)
+    select_channel_files,
+    get_dapi_file,
+    threshold_dapi,
+    filter_tiles_by_mask,
+    apply_mask_to_channels,
+    to_fake_rgb,)
 
 __author__ = "Marko van Treeck"
 __copyright__ = "Copyright (C) 2022-2024 Marko van Treeck"
@@ -72,13 +76,6 @@ def _get_preprocessing_code_hash() -> str:
     return hasher.hexdigest()
 
 
-def to_fake_rgb(image: Image.Image) -> Image.Image:
-    """Convert a grayscale image to fake RGB by duplicating the channel."""
-    if image.mode != "L":
-        image = image.convert("L")
-    return Image.merge("RGB", (image, image, image))
-
-
 class _TileDataset(IterableDataset):
     def __init__(
         self,
@@ -92,7 +89,8 @@ class _TileDataset(IterableDataset):
         max_workers: int,
         brightness_cutoff: int | None,
         canny_cutoff: float | None,
-        default_slide_mpp: SlideMPP | None,
+        default_slide_mpp: SlideMPP,
+        mask: np.ndarray | None = None,  # <-- Add this
     ) -> None:
         self.slide_path = slide_path
         self.cache_dir = cache_dir
@@ -105,6 +103,7 @@ class _TileDataset(IterableDataset):
         self.brightness_cutoff = brightness_cutoff
         self.canny_cutoff = canny_cutoff
         self.default_slide_mpp = default_slide_mpp
+        self.mask = mask
 
         # Already check if we can extract the MPP here.
         # We don't want to kill our dataloader later,
@@ -118,20 +117,24 @@ class _TileDataset(IterableDataset):
             raise MPPExtractionError()
 
     def __iter__(self) -> Iterator[tuple[Tensor, Microns, Microns]]:
+        tiles = tiles_with_cache(
+            self.slide_path,
+            cache_dir=self.cache_dir,
+            cache_tiles_ext=self.cache_tiles_ext,
+            tile_size_um=self.tile_size_um,
+            tile_size_px=self.tile_size_px,
+            max_supertile_size_slide_px=self.max_supertile_size_slide_px,
+            max_workers=self.max_workers,
+            brightness_cutoff=self.brightness_cutoff,
+            canny_cutoff=self.canny_cutoff,
+            default_slide_mpp=self.default_slide_mpp,
+        )
+        # Filter tiles using mask if provided
+        if self.mask is not None:
+            tiles = filter_tiles_by_mask(tiles, self.mask, self.tile_size_px, slide_mpp=self.default_slide_mpp)
         return (
             (self.transform(to_fake_rgb(tile.image)), tile.coordinates.x, tile.coordinates.y)
-            for tile in tiles_with_cache(
-                self.slide_path,
-                cache_dir=self.cache_dir,
-                cache_tiles_ext=self.cache_tiles_ext,
-                tile_size_um=self.tile_size_um,
-                tile_size_px=self.tile_size_px,
-                max_supertile_size_slide_px=self.max_supertile_size_slide_px,
-                max_workers=self.max_workers,
-                brightness_cutoff=self.brightness_cutoff,
-                canny_cutoff=self.canny_cutoff,
-                default_slide_mpp=self.default_slide_mpp,
-            )
+            for tile in tiles
         )
 
 
@@ -149,7 +152,7 @@ def extract_(
     tile_size_um: Microns,
     max_workers: int,
     device: DeviceLikeType,
-    default_slide_mpp: SlideMPP | None,
+    default_slide_mpp: SlideMPP,
     brightness_cutoff: int | None,
     canny_cutoff: float | None,
     generate_hash: bool,
@@ -280,7 +283,17 @@ def extract_(
             dapi_index=dapi_index,
             exclude_bgsub=exclude_bgsub,
         )
-        
+        dapi_file = get_dapi_file([f for f in selected_files if f is not None])
+        mask = None
+        if dapi_file is not None and dapi_file.exists():
+            mask = threshold_dapi(dapi_file)
+
+            # Apply mask to all channels (including DAPI and others)
+            masked_channels = apply_mask_to_channels(
+                [f for f in selected_files if f is not None], mask
+            )
+            # Now masked_channels is a dict: {filename: masked_array}
+            # You can use these arrays for further processing or feature extraction
 
         # Check if this slide is one we actually want to process
         # Skip if it's not in our selected_files list
@@ -302,6 +315,7 @@ def extract_(
                 brightness_cutoff=brightness_cutoff,
                 canny_cutoff=canny_cutoff,
                 default_slide_mpp=default_slide_mpp,
+                mask=mask,  # <-- Pass mask here
             )
             # Parallelism is implemented in the dataset iterator already, so one worker is enough!
             dl = DataLoader(ds, batch_size=64, num_workers=1, drop_last=False)
@@ -372,7 +386,7 @@ def _get_rejection_thumb(
     size: tuple[int, int],
     coords_um: npt.NDArray,
     tile_size_um: Microns,
-    default_slide_mpp: SlideMPP | None,
+    default_slide_mpp: SlideMPP,
 ) -> Image.Image:
     """Creates a thumbnail of the slide"""
 
