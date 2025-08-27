@@ -45,6 +45,7 @@ class TrainConfig(BaseModel):
     use_multiplex: bool = True
     use_marker_attention: bool = True
     marker_hidden_dim: int = 256
+    feature_dim: int = 1536  
 
 
 class CrossvalConfig(TrainConfig):

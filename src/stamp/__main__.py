@@ -214,6 +214,7 @@ def _run_cli(args: argparse.Namespace) -> None:
                 topk=config.heatmaps.topk,
                 bottomk=config.heatmaps.bottomk,
                 default_slide_mpp=config.heatmaps.default_slide_mpp,
+                channel_order=config.heatmaps.channel_order, 
             )
 
         case _:
