@@ -143,6 +143,7 @@ def train_categorical_model_(
         use_alibi=use_alibi,
         channel_order=channel_order,
         use_multiplex=use_multiplex,
+        max_epochs=max_epochs,  
     )
     train_model_(
         output_dir=output_dir,
@@ -214,13 +215,15 @@ def setup_model_for_training(
     num_workers: int,
     train_transform: Callable[[torch.Tensor], torch.Tensor] | None,
     use_alibi: bool,
-    # Metadata, has no effect on model training
     channel_order: list[str],
     use_multiplex: bool = True,
     ground_truth_label: PandasLabel,
     clini_table: Path,
     slide_table: Path,
     feature_dir: Path,
+    max_epochs: int = 64, 
+    max_lr: float = 1e-4,         
+    div_factor: float = 25.0,    
 ) -> tuple[
     LitVisionTransformer,
     DataLoader[tuple[Bags, CoordinatesBatch, BagSizes, EncodedTargets]],
@@ -299,24 +302,29 @@ def setup_model_for_training(
             "You may want to consider removing these categories; the model will likely overfit on the few samples available."
         )
 
+    steps_per_epoch = len(train_dl)
+    total_steps = steps_per_epoch * max_epochs
+
     # Train the model
     model = LitVisionTransformer(
         categories=train_categories,
         category_weights=category_weights,
-        dim_input=dim_feats,
+        dim_input=1536,
         dim_model=512,
         dim_feedforward=2048,
         n_heads=8,
         n_layers=2,
         dropout=0.25,
         use_alibi=use_alibi,
-        # Metadata, has no effect on model training
         ground_truth_label=ground_truth_label,
         train_patients=train_patients,
         valid_patients=valid_patients,
         clini_table=clini_table,
         slide_table=slide_table,
         feature_dir=feature_dir,
+        total_steps=total_steps, 
+        max_lr=max_lr,            
+        div_factor=div_factor,   
     )
 
     return model, train_dl, valid_dl

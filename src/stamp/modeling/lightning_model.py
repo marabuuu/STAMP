@@ -78,6 +78,9 @@ class LitVisionTransformer(lightning.LightningModule):
         stamp_version: Version = Version(stamp.__version__),
         use_marker_attention: bool = True,
         marker_hidden_dim: int = 256,
+        total_steps: int = 1000,  
+        max_lr: float = 1e-4,   
+        div_factor: float = 25.0, 
         # Other metadata
         **metadata,
     ) -> None:
@@ -99,6 +102,7 @@ class LitVisionTransformer(lightning.LightningModule):
             use_alibi=use_alibi,
             use_marker_attention=use_marker_attention,
             marker_hidden_dim=marker_hidden_dim,
+            total_steps=total_steps,  # <-- Pass here if needed
         )
         self.class_weights = category_weights
         self.valid_auroc = MulticlassAUROC(len(categories))
@@ -108,6 +112,9 @@ class LitVisionTransformer(lightning.LightningModule):
         self.categories = np.array(categories)
         self.train_patients = train_patients
         self.valid_patients = valid_patients
+        self.total_steps = total_steps
+        self.max_lr = max_lr
+        self.div_factor = div_factor
 
         _ = metadata  # unused, but saved in model
 
@@ -208,9 +215,17 @@ class LitVisionTransformer(lightning.LightningModule):
         # adding a mask here will *drastically* and *unbearably* increase memory usage
         return self.vision_transformer(bags, coords=coords, mask=None)
 
-    def configure_optimizers(self) -> optim.Optimizer:
-        optimizer = optim.Adam(self.parameters(), lr=1e-3)
-        return optimizer
+    def configure_optimizers(
+        self,
+    ) -> tuple[list[optim.Optimizer], list[optim.lr_scheduler.LRScheduler]]:
+        optimizer = optim.AdamW(self.parameters(), lr=self.max_lr / self.div_factor)
+        scheduler = optim.lr_scheduler.OneCycleLR(
+            optimizer=optimizer,
+            total_steps=self.total_steps,
+            max_lr=self.max_lr,
+            div_factor=self.div_factor,
+        )
+        return [optimizer], [scheduler]
 
 
 def _mask_from_bags(
