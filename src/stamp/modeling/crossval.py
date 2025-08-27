@@ -3,6 +3,11 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, Final
 
+import torch.serialization
+from packaging.version import Version, parse, _Version
+from packaging._structures import InfinityType, NegativeInfinityType
+import pathlib
+
 import numpy as np
 from lightning.pytorch.accelerators.accelerator import Accelerator
 from pydantic import BaseModel
@@ -30,6 +35,7 @@ __license__ = "MIT"
 
 _logger = logging.getLogger("stamp")
 
+torch.serialization.add_safe_globals([Version, parse, _Version, InfinityType, NegativeInfinityType, pathlib.PosixPath])
 
 class _Split(BaseModel):
     train_patients: set[PatientId]

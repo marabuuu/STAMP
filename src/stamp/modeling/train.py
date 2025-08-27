@@ -4,6 +4,11 @@ from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import cast
 
+import torch.serialization
+from packaging.version import Version, parse, _Version
+from packaging._structures import InfinityType, NegativeInfinityType
+import pathlib
+
 import lightning
 import lightning.pytorch
 import lightning.pytorch.accelerators
@@ -41,6 +46,8 @@ __copyright__ = "Copyright (C) 2024 Marko van Treeck"
 __license__ = "MIT"
 
 _logger = logging.getLogger("stamp")
+
+torch.serialization.add_safe_globals([Version, parse, _Version, InfinityType, NegativeInfinityType, pathlib.PosixPath])
 
 
 def train_categorical_model_(
