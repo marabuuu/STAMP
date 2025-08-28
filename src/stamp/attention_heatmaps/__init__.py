@@ -2,6 +2,37 @@ import torch
 import matplotlib.pyplot as plt
 from pathlib import Path
 
+
+def extract_and_save_attention_(
+    *,
+    model,
+    slide_paths,
+    feature_dir: Path,
+    device: str,
+    attention_weights_dir: Path,
+):
+    attention_weights_dir.mkdir(exist_ok=True, parents=True)
+    for slide_path in slide_paths:
+        # Load features and coordinates for this slide
+        feats = torch.load(feature_dir / f"{slide_path.stem}_feats.pt", map_location=device)
+        coords_um = torch.load(feature_dir / f"{slide_path.stem}_coords.pt", map_location=device)
+        slide_id = slide_path.stem
+
+        with torch.no_grad():
+            logits, marker_attn, patch_attn = model.vision_transformer(
+                bags=feats.unsqueeze(0),
+                coords=coords_um.unsqueeze(0),
+                mask=torch.zeros(1, len(feats), dtype=torch.bool, device=device),
+                return_marker_attention=True,
+            )
+            torch.save(
+                {
+                    "marker_attn": marker_attn.cpu(),
+                    "patch_attn": patch_attn.cpu(),
+                },
+                attention_weights_dir / f"{slide_id}.pt"
+            )
+
 def aggregate_marker_attention(
         marker_attn, 
         patch_attn, 
@@ -47,6 +78,15 @@ def attention_heatmap_(
     marker_names: list of str, optional marker/channel names
     top_k_percent: float, percent of top patches to use (default 0.1)
     """
+
+    extract_and_save_attention_(
+    model=model,
+    slide_paths=slide_paths,
+    feature_dir=feature_dir,
+    device=device,
+    attention_weights_dir=attention_weights_dir
+)
+
     avg_marker_attn = aggregate_marker_attention(marker_attn, patch_attn, top_k_percent)
     visualize_marker_attention(avg_marker_attn, output_path, channel_order)
     return avg_marker_attn
