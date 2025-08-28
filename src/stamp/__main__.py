@@ -214,7 +214,26 @@ def _run_cli(args: argparse.Namespace) -> None:
                 topk=config.heatmaps.topk,
                 bottomk=config.heatmaps.bottomk,
                 default_slide_mpp=config.heatmaps.default_slide_mpp,
-                channel_order=config.heatmaps.channel_order, 
+            )
+
+        case "attention_heatmaps":
+            from stamp.attention_heatmaps import attention_heatmap_
+            
+
+            if config.attention_heatmaps is None:
+                raise ValueError("no attention heatmaps configuration supplied")
+
+            _add_file_handle_(_logger, output_dir=config.attention_heatmaps.output_dir)
+            _logger.info(
+                "using the following configuration:\n"
+                f"{yaml.dump(config.attention_heatmaps.model_dump(mode='json'))}"
+            )
+            attention_heatmap_(
+                marker_attn=marker_attn,
+                patch_attn=patch_attn,
+                output_path=config.attention_heatmaps.output_dir,
+                channel_order=config.attention_heatmaps.channel_order,
+                top_k_percent=config.attention_heatmaps.top_k_percent,
             )
 
         case _:
