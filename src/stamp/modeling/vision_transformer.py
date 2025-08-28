@@ -12,7 +12,7 @@ from jaxtyping import Bool, Float, jaxtyped
 from torch import Tensor, nn
 
 from stamp.modeling.alibi import MultiHeadALiBi
-from fluoroformer.layers import MarkerAttention
+from fluoroformer.layers import MarkerAttention, PatchAttention
 
 
 def feed_forward(
@@ -188,7 +188,12 @@ class VisionTransformer(nn.Module):
                 hidden_dim=marker_hidden_dim,
                 num_heads=1,
                 dropout=dropout
-    )
+            )
+            self.patch_attention = PatchAttention(
+                input_dim=512,              # Use 'input_dim' instead of 'embedding_dim'
+                hidden_dim=marker_hidden_dim,
+                dropout=dropout
+            )
     
             
 
@@ -225,12 +230,14 @@ class VisionTransformer(nn.Module):
         coords: Float[Tensor, "batch tile 2"],
         mask: Bool[Tensor, "batch tile"] | None = None,
         return_marker_attention: bool = False,
-    ) -> Tensor | tuple[Tensor, Any]:
+    ) -> Tensor | tuple[Tensor, Any] | tuple[Tensor, Any, Any]:
         # Handle multiplex data format if marker attention is enabled
         print(f"[DEBUG] use_marker_attention: {self.use_marker_attention}")
         print(f"[DEBUG] bags.shape at entry: {bags.shape}, bags.dim(): {bags.dim()}")
         print(f"[DEBUG] return_marker_attention: {return_marker_attention}")
-        attn = None
+        
+        marker_attn = None
+        patch_attn = None
         
         # Handle multiplex data (4D tensor)
         if self.use_marker_attention and bags.dim() == 4:
@@ -245,53 +252,11 @@ class VisionTransformer(nn.Module):
             # Reshape back to [batch, marker, 512, patch]
             projected_bags = projected_bags.reshape(batch_size, n_markers, n_patches, 512).permute(0, 1, 3, 2)
             
-            # Now apply marker attention
-            bags, attn = self.marker_attention(projected_bags)
-            print(f"[DEBUG] marker_attention output: bags.shape={bags.shape}, attn.shape={attn.shape}")
-            
-            # Process attention shape to make it compatible with visualization
-            if return_marker_attention and attn is not None:
-                # MarkerAttention output shape is typically [batch, patches, markers, markers]
-                print(f"[DEBUG] Processing attention for visualization, raw shape={attn.shape}")
-                
-                # Print sample of attention values to debug
-                try:
-                    print(f"[DEBUG] Sample attention values: min={attn.min().item()}, max={attn.max().item()}, mean={attn.mean().item()}")
-                    if attn.dim() >= 3:
-                        print(f"[DEBUG] Unique marker indices that would be chosen: {torch.argmax(attn.mean(dim=-1), dim=-1).unique().tolist()}")
-                except Exception as e:
-                    print(f"[DEBUG] Error getting attention stats: {e}")
-                
-                # Store raw attention for later visualization
-                # For marker attention, we need to track which marker attends to which marker
-                if attn.dim() == 4:  # [batch, patches, markers, markers]
-                    # Convert to [patches, markers, markers] for easier visualization
-                    attn = attn.squeeze(0)
-                elif attn.dim() == 3 and attn.shape[0] != n_patches:
-                    # Might be [markers, patches, markers] - reshape if needed
-                    if attn.shape[1] == n_patches:
-                        attn = attn.permute(1, 0, 2)  # -> [patches, markers, markers]
-                
-                # Apply softmax across the marker dimension to get proper attention weights
-                if attn.dim() == 3:
-                    # Apply softmax across last dimension (marker dimension) for each tile and marker
-                    attention_scores = torch.nn.functional.softmax(attn, dim=-1)
-                    # Average across the marker queries to get a single score per marker for each tile
-                    attention_weights = attention_scores.mean(dim=1)  # [patches, markers]
-                elif attn.dim() == 2:
-                    # Direct [patches, markers] format
-                    attention_weights = torch.nn.functional.softmax(attn, dim=-1)
-                else:
-                    # Fallback - reshape to [patches, -1] and apply softmax
-                    flat_attn = attn.reshape(n_patches, -1)
-                    attention_weights = torch.nn.functional.softmax(flat_attn, dim=-1)
-                    
-                print(f"[DEBUG] Processed attention_weights shape: {attention_weights.shape}")
-                print(f"[DEBUG] Unique marker indices after processing: {torch.argmax(attention_weights, dim=-1).unique().tolist()}")
-                
-                # Store processed attention for later use - save both raw attention and processed weights
-                self._processed_attn = attention_weights  # Use the normalized weights for visualization
-                self._raw_attn = attn  # Keep the raw attention for debugging
+            # Apply marker attention
+            bags, marker_attn = self.marker_attention(projected_bags)
+
+            # Apply patch attention
+            bags, patch_attn = self.patch_attention(bags)
             
         # Handle standard data (3D tensor)
         # Now process as standard input with shape [batch, tile, feature]
@@ -357,22 +322,5 @@ class VisionTransformer(nn.Module):
         logits = self.mlp_head(bags)
 
         if return_marker_attention:
-            # If we have marker attention from fluoroformer, ensure it has the expected shape
-            if hasattr(self, 'marker_attention') and self.use_marker_attention and attn is not None:
-                print(f"[DEBUG] Returning marker attention with shape: {attn.shape}")
-                
-                # Check if we need to process the attention for visualization
-                if attn.dim() > 2 and getattr(self, '_processed_attn', None) is not None:
-                    print(f"[DEBUG] Using pre-processed attention")
-                    return logits, self._processed_attn
-                
-                # Handle any shape mismatches for visualization
-                if attn.dim() == 3 and attn.shape[0] == 1:
-                    # Reshape batch dimension for heatmap visualization
-                    attn = attn.squeeze(0)
-                    print(f"[DEBUG] Squeezed attention shape: {attn.shape}")
-            else:
-                print(f"[DEBUG] No marker attention available, returning None")
-            
-            return logits, attn
+            return logits, marker_attn, patch_attn
         return logits
