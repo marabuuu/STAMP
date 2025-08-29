@@ -255,12 +255,26 @@ class VisionTransformer(nn.Module):
             # Apply marker attention
             bags, marker_attn = self.marker_attention(projected_bags)
 
-            # Apply patch attention
-            bags, patch_attn = self.patch_attention(bags)
+            print(f"[DEBUG] bags after marker_attention: {bags.shape}")
+            # If bags is [batch, patch, embedding], coords should be [batch, patch, 2]
+            if bags.shape[1] != coords.shape[1]:
+                print(f"[WARNING] bags and coords sequence mismatch: {bags.shape[1]} vs {coords.shape[1]}")
+                # Fix by slicing or pooling coords as needed
+                coords = coords[:, :bags.shape[1], :]
             
         # Handle standard data (3D tensor)
         # Now process as standard input with shape [batch, tile, feature]
-        batch_size, n_tiles, n_features = bags.shape
+        print(f"[DEBUG] bags.shape before unpack: {bags.shape}")
+        if bags.dim() == 3:
+            batch_size, n_tiles, n_features = bags.shape
+        elif bags.dim() == 2:
+            # Likely [batch, feature] after pooling/attention
+            batch_size, n_features = bags.shape
+            n_tiles = 1
+            bags = bags.unsqueeze(1)  # [batch, 1, feature]
+            print(f"[DEBUG] bags reshaped to: {bags.shape}")
+        else:
+            raise ValueError(f"Unexpected bags shape: {bags.shape}")
 
         # Map input sequence to latent space
         # For standard (non-multiplex) features, bypass pre_projection if marker attention is enabled
@@ -288,6 +302,15 @@ class VisionTransformer(nn.Module):
             [torch.zeros(batch_size, 1, 2).type_as(coords), coords], dim=1
         )
 
+        # --- FIX: Ensure bags and coords have matching sequence length ---
+        if bags.shape[1] != coords.shape[1]:
+            min_seq = min(bags.shape[1], coords.shape[1])
+            print(f"[WARNING] Truncating bags, coords, and mask to min_seq={min_seq}")
+            bags = bags[:, :min_seq]
+            coords = coords[:, :min_seq]
+            if mask is not None:
+                mask = mask[:, :min_seq-1]  # -1 because mask does not include class token
+
         # The rest of the method stays exactly the same
         match mask:
             case None:
@@ -309,6 +332,10 @@ class VisionTransformer(nn.Module):
                 alibi_mask = torch.zeros_like(square_attn_mask)
                 alibi_mask[:, 0, :] = True
                 alibi_mask[:, :, 0] = True
+
+                # Truncate mask to match bags/coords sequence length
+                seq_len = bags.shape[1]
+                square_attn_mask = square_attn_mask[:, :seq_len, :seq_len]
 
                 bags = self.transformer(
                     bags,

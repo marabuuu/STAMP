@@ -6,7 +6,7 @@ from typing import TypeAlias
 import lightning
 import numpy as np
 import torch
-from jaxtyping import Bool, Float
+from jaxtyping import Bool, Float, Integer
 from packaging.version import Version
 from torch import Tensor, nn, optim
 from torchmetrics.classification import MulticlassAUROC
@@ -146,8 +146,12 @@ class LitVisionTransformer(lightning.LightningModule):
 
     def _step(
         self,
-        *,
-        batch: tuple[Bags, CoordinatesBatch, BagSizes, EncodedTargets],
+        batch: tuple[
+            Float[Tensor, "batch tile feature"] | Float[Tensor, "batch marker feature tile"],
+            Float[Tensor, "batch tile 2"],
+            Integer[Tensor, "batch"],
+            Bool[Tensor, "batch category_is_hot"],
+        ],
         step_name: str,
         use_mask: bool,
     ) -> Loss:
