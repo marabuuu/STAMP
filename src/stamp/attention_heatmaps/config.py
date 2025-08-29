@@ -12,3 +12,5 @@ class AttentionHeatmapConfig(BaseModel):
     device: str = "cuda"
     top_k_percent: float = 0.1  # Use top 10% patches
     channel_order: list[str]
+    marker_attn: bool = True
+    patch_attn: bool = True

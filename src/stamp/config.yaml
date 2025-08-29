@@ -223,9 +223,8 @@ heatmaps:
   #bottomk: 5
 
   attention_heatmaps:
-  output_dir: "/path/to/save/files/to"
-  channel_order: ["list", "of", "markers"]  # e.g. ["CD3", "CD8", "CD20", "DAPI"]
-
-  wsi_dir: "/path/containing/whole/slide/images/to/extract/features/from"
-
-  checkpoint_path: "/path/to/model.ckpt"
+    output_dir: "/path/to/save/files/to"
+    channel_order: ["list", "of", "markers"]  # e.g. ["CD3", "CD8", "CD20", "DAPI"]
+    wsi_dir: "/path/containing/whole/slide/images/to/extract/features/from"
+    checkpoint_path: "/path/to/model.ckpt"
+    top_k_percent

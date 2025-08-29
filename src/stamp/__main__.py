@@ -218,7 +218,6 @@ def _run_cli(args: argparse.Namespace) -> None:
 
         case "attention_heatmaps":
             from stamp.attention_heatmaps import attention_heatmap_
-            
 
             if config.attention_heatmaps is None:
                 raise ValueError("no attention heatmaps configuration supplied")
@@ -228,9 +227,10 @@ def _run_cli(args: argparse.Namespace) -> None:
                 "using the following configuration:\n"
                 f"{yaml.dump(config.attention_heatmaps.model_dump(mode='json'))}"
             )
+
             attention_heatmap_(
-                marker_attn=marker_attn,
-                patch_attn=patch_attn,
+                marker_attn=config.attention_heatmaps.marker_attn,
+                patch_attn=config.attention_heatmaps.patch_attn,
                 output_path=config.attention_heatmaps.output_dir,
                 channel_order=config.attention_heatmaps.channel_order,
                 top_k_percent=config.attention_heatmaps.top_k_percent,
