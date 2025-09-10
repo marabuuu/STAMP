@@ -103,8 +103,9 @@ def attention_heatmap_(
         *,
         checkpoint_path: Path,
         feature_dir: Path,
-        slide_paths: Iterable[Path] ,
+        slide_paths: Iterable[Path],
         wsi_dir: Path,
+        masson_trichrome_path: Path,
         device: str,
         output_path: Path,
         channel_order: list[str],  
@@ -203,10 +204,42 @@ def attention_heatmap_(
         marker_colors = [colors[i % len(colors)] for i in range(len(channel_order))]
         custom_cmap = ListedColormap(marker_colors)
 
-        plt.figure(figsize=(10, 10))
-        im = plt.imshow(grid, cmap=custom_cmap, origin='lower', aspect='equal', interpolation='none', vmin=0, vmax=len(channel_order)-1)
-        # Create legend
+        # --- Visualization: Masson trichrome image (left) and heatmap (right) ---
         import matplotlib.patches as mpatches
+        import os
+        # Load Masson trichrome image (tif)
+        masson_img = None
+        try:
+            from tifffile import imread as tiff_imread
+            masson_img = tiff_imread(str(masson_trichrome_path))
+        except ImportError:
+            try:
+                from PIL import Image
+                masson_img = np.array(Image.open(str(masson_trichrome_path)))
+            except Exception as e:
+                print(f"[WARNING] Could not load Masson trichrome image: {e}")
+                masson_img = None
+        except Exception as e:
+            print(f"[WARNING] Could not load Masson trichrome image: {e}")
+            masson_img = None
+
+        fig, axes = plt.subplots(1, 2, figsize=(18, 10), gridspec_kw={'width_ratios': [1, 1.2]})
+        # Left: Masson trichrome image
+        ax_img = axes[0]
+        if masson_img is not None:
+            if masson_img.ndim == 2:
+                ax_img.imshow(masson_img, cmap='gray')
+            else:
+                ax_img.imshow(masson_img)
+            ax_img.set_title("Masson Trichrome")
+        else:
+            ax_img.text(0.5, 0.5, "Image not found", ha='center', va='center', fontsize=16)
+            ax_img.set_title("Masson Trichrome (not found)")
+        ax_img.axis('off')
+
+        # Right: Heatmap
+        ax_hm = axes[1]
+        im = ax_hm.imshow(grid, cmap=custom_cmap, origin='lower', aspect='equal', interpolation='none', vmin=0, vmax=len(channel_order)-1)
         # Only use RGB or RGBA tuples for legend colors, ensure correct length
         legend_handles = []
         for i in range(len(channel_order)):
@@ -217,16 +250,15 @@ def attention_heatmap_(
                 elif len(color) == 4:
                     legend_handles.append(mpatches.Patch(color=(float(color[0]), float(color[1]), float(color[2]), float(color[3])), label=channel_order[i]))
                 else:
-                    # Truncate or pad to exactly 3 floats (RGB)
                     rgb_list = [float(x) for x in color]
                     rgb = tuple((rgb_list + [0.0, 0.0, 0.0])[:3])
                     legend_handles.append(mpatches.Patch(color=rgb, label=channel_order[i]))
             else:
-                # Fallback: skip or use default color
                 legend_handles.append(mpatches.Patch(label=channel_order[i]))
-        plt.legend(handles=legend_handles, bbox_to_anchor=(1.05, 1), loc='upper left', borderaxespad=0.)
-        plt.title("Most Influential Marker per Tile (Heatmap)")
-        plt.axis('off')
+        ax_hm.legend(handles=legend_handles, bbox_to_anchor=(1.05, 1), loc='upper left', borderaxespad=0.)
+        ax_hm.set_title("Most Influential Marker per Tile (Heatmap)")
+        ax_hm.axis('off')
+
         plt.tight_layout()
         plt.savefig(output_path / f"{slide_path.stem}_influential_marker_heatmap.png", bbox_inches='tight')
         plt.close()

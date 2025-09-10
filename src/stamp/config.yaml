@@ -229,6 +229,7 @@ attention_heatmaps:
   # Directory the extracted features are saved in.
   feature_dir: "/path/your/extracted/features/are/stored/in"
   wsi_dir: "/path/containing/whole/slide/images/to/extract/features/from"
+  masson_trichrome_path: "/path/to/masson_trichrome_image"
   checkpoint_path: "/path/to/model.ckpt"
 
   #slide_paths:

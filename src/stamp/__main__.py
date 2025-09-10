@@ -232,6 +232,7 @@ def _run_cli(args: argparse.Namespace) -> None:
                 checkpoint_path=config.attention_heatmaps.checkpoint_path,
                 feature_dir=config.attention_heatmaps.feature_dir,
                 wsi_dir=config.attention_heatmaps.wsi_dir,
+                masson_trichrome_path=config.attention_heatmaps.masson_trichrome_path,
                 slide_paths=config.attention_heatmaps.slide_paths or [],
                 device=config.attention_heatmaps.device,
                 output_path=config.attention_heatmaps.output_dir,
