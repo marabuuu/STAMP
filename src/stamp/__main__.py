@@ -229,8 +229,11 @@ def _run_cli(args: argparse.Namespace) -> None:
             )
 
             attention_heatmap_(
-                marker_attn=config.attention_heatmaps.marker_attn,
-                patch_attn=config.attention_heatmaps.patch_attn,
+                checkpoint_path=config.attention_heatmaps.checkpoint_path,
+                feature_dir=config.attention_heatmaps.feature_dir,
+                wsi_dir=config.attention_heatmaps.wsi_dir,
+                slide_paths=config.attention_heatmaps.slide_paths or [],
+                device=config.attention_heatmaps.device,
                 output_path=config.attention_heatmaps.output_dir,
                 channel_order=config.attention_heatmaps.channel_order,
                 top_k_percent=config.attention_heatmaps.top_k_percent,
@@ -287,6 +290,7 @@ def main() -> None:
     )
     commands.add_parser("config", help="Print the loaded configuration")
     commands.add_parser("heatmaps", help="Generate heatmaps for a trained model")
+    commands.add_parser("attention_heatmaps", help="Generate attention heatmaps for a trained model")
 
     args = parser.parse_args()
 

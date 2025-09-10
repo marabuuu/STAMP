@@ -222,9 +222,15 @@ heatmaps:
   #topk: 5
   #bottomk: 5
 
-  attention_heatmaps:
-    output_dir: "/path/to/save/files/to"
-    channel_order: ["list", "of", "markers"]  # e.g. ["CD3", "CD8", "CD20", "DAPI"]
-    wsi_dir: "/path/containing/whole/slide/images/to/extract/features/from"
-    checkpoint_path: "/path/to/model.ckpt"
-    top_k_percent
+attention_heatmaps:
+  output_dir: "/path/to/save/files/to"
+  channel_order: ["list", "of", "markers"]  # e.g. ["CD3", "CD8", "CD20", "DAPI"]
+
+  # Directory the extracted features are saved in.
+  feature_dir: "/path/your/extracted/features/are/stored/in"
+  wsi_dir: "/path/containing/whole/slide/images/to/extract/features/from"
+  checkpoint_path: "/path/to/model.ckpt"
+
+  #slide_paths:
+  #- slide1.svs
+  #- slide2.mrxs

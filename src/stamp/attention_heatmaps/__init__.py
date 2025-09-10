@@ -1,53 +1,88 @@
+
+import h5py
 import torch
 import matplotlib.pyplot as plt
+import numpy as np
 from pathlib import Path
-
-
-def extract_and_save_attention_(
-    *,
-    model,
-    slide_paths,
-    feature_dir: Path,
-    device: str,
-    attention_weights_dir: Path,
-):
-    attention_weights_dir.mkdir(exist_ok=True, parents=True)
-    for slide_path in slide_paths:
-        # Load features and coordinates for this slide
-        feats = torch.load(feature_dir / f"{slide_path.stem}_feats.pt", map_location=device)
-        coords_um = torch.load(feature_dir / f"{slide_path.stem}_coords.pt", map_location=device)
-        slide_id = slide_path.stem
-
-        with torch.no_grad():
-            logits, marker_attn, patch_attn = model.vision_transformer(
-                bags=feats.unsqueeze(0),
-                coords=coords_um.unsqueeze(0),
-                mask=torch.zeros(1, len(feats), dtype=torch.bool, device=device),
-                return_marker_attention=True,
-            )
-            torch.save(
-                {
-                    "marker_attn": marker_attn.cpu(),
-                    "patch_attn": patch_attn.cpu(),
-                },
-                attention_weights_dir / f"{slide_id}.pt"
-            )
+from typing import Iterable
+from stamp.preprocessing import supported_extensions
 
 def aggregate_marker_attention(
-        marker_attn, 
-        patch_attn, 
-        top_k_percent=0.1):
+    marker_attn, 
+    patch_attn=None, 
+    top_k_percent=0.1):
     """
     marker_attn: Tensor [patches, markers, markers]
     patch_attn: Tensor [patches]
     Returns: average marker attention matrix for top-k patches
     """
-    n_patches = patch_attn.shape[0]
-    top_k = max(1, int(n_patches * top_k_percent))
-    top_indices = torch.topk(patch_attn, top_k).indices
-    selected_marker_attn = marker_attn[top_indices]  # [top_k, markers, markers]
-    avg_marker_attn = selected_marker_attn.mean(dim=0)  # [markers, markers]
+    if patch_attn is not None:
+        n_patches = patch_attn.shape[0]
+        top_k = max(1, int(n_patches * top_k_percent))
+        top_indices = torch.topk(patch_attn, top_k).indices
+        selected_marker_attn = marker_attn[top_indices]  # [top_k, markers, markers]
+        avg_marker_attn = selected_marker_attn.mean(dim=0)  # [markers, markers]
+    else:
+        # If patch_attn is not provided, average over all tiles
+        avg_marker_attn = marker_attn.mean(dim=0)
     return avg_marker_attn
+
+def load_multiplex_features(feature_dir: Path, channel_order: list[str]) -> torch.Tensor:
+    """
+    Loads and stacks features from h5 files for all markers in channel_order, case-insensitive.
+    Returns: stacked_features [markers, tiles, features]
+    """
+    features_per_marker = []
+    all_files = list(feature_dir.glob("*.h5"))
+    all_files_lower = {f.name.lower(): f for f in all_files}
+
+    for marker in channel_order:
+        marker_lower = marker.lower()
+        # Find the first file that contains the marker name (case-insensitive)
+        found_file = None
+        for f in all_files:
+            if marker_lower in f.name.lower():
+                found_file = f
+                break
+        if not found_file:
+            if features_per_marker:
+                zero_feats = torch.zeros_like(features_per_marker[0])
+            else:
+                # If this is the first marker and missing, you need to decide on a default shape
+                # For example, look at another file in the directory:
+                example_file = next(iter(all_files), None)
+                if example_file is not None:
+                    with h5py.File(example_file, "r") as h5:
+                        feats_obj = h5["feats"]
+                        if isinstance(feats_obj, h5py.Dataset):
+                            shape = feats_obj.shape
+                        else:
+                            raise RuntimeError(f'"feats" in {example_file} is not a dataset (found {type(feats_obj)}).')
+                    zero_feats = torch.zeros(shape, dtype=torch.float32)
+                else:
+                    raise RuntimeError("No marker files found in feature_dir to infer shape.")
+            features_per_marker.append(zero_feats)
+        else:
+            with h5py.File(found_file, "r") as h5:
+                feats = torch.from_numpy(h5["feats"][:]).float()
+                features_per_marker.append(feats)
+    stacked_features = torch.stack(features_per_marker)
+    return stacked_features
+
+def load_coords_from_h5(feature_dir: Path, channel_order: list[str]) -> np.ndarray:
+    """
+    Loads coordinates from the first available marker h5 file in channel_order.
+    Returns: coords [tiles, 2]
+    """
+    all_files = list(feature_dir.glob("*.h5"))
+    for marker in channel_order:
+        marker_lower = marker.lower()
+        for f in all_files:
+            if marker_lower in f.name.lower():
+                with h5py.File(f, "r") as h5:
+                    coords = h5["coords"][:]
+                return coords
+    raise FileNotFoundError("No marker h5 file with coords found in feature_dir.")
 
 def visualize_marker_attention(
         avg_marker_attn, 
@@ -65,28 +100,133 @@ def visualize_marker_attention(
     plt.close()
 
 def attention_heatmap_(
-        marker_attn, 
-        patch_attn, 
-        output_path, 
-        channel_order=None,  
-        top_k_percent=0.1):
-    """
-    Combines aggregation and visualization of marker attention.
-    marker_attn: Tensor [patches, markers, markers]
-    patch_attn: Tensor [patches]
-    output_path: str or Path, where to save the heatmap
-    marker_names: list of str, optional marker/channel names
-    top_k_percent: float, percent of top patches to use (default 0.1)
-    """
+        *,
+        checkpoint_path: Path,
+        feature_dir: Path,
+        slide_paths: Iterable[Path] ,
+        wsi_dir: Path,
+        device: str,
+        output_path: Path,
+        channel_order: list[str],  
+        top_k_percent=0.1,
+    ):
+    from stamp.modeling.lightning_model import LitVisionTransformer
 
-    extract_and_save_attention_(
-    model=model,
-    slide_paths=slide_paths,
-    feature_dir=feature_dir,
-    device=device,
-    attention_weights_dir=attention_weights_dir
-)
+    model = LitVisionTransformer.load_from_checkpoint(checkpoint_path).to(device).eval()
 
-    avg_marker_attn = aggregate_marker_attention(marker_attn, patch_attn, top_k_percent)
-    visualize_marker_attention(avg_marker_attn, output_path, channel_order)
-    return avg_marker_attn
+    # Fallback: if slide_paths is None or empty, use all slides in wsi_dir
+    if not slide_paths:
+        slide_paths = [
+            p for ext in supported_extensions for p in Path(wsi_dir).glob(f"**/*{ext}")
+        ]
+
+
+    # --- Only run once per sample, not per marker file ---
+    # Assume all marker files in feature_dir belong to the same sample
+    # Use the first slide_path for naming output files
+    slide_path = next(iter(slide_paths)) if slide_paths else Path(feature_dir)
+
+    # Load all features and coords once
+    stacked_features = load_multiplex_features(feature_dir, channel_order).to(device)
+    stacked_features = stacked_features.permute(0, 2, 1).unsqueeze(0)  # [1, markers, features, tiles]
+    coords_um = load_coords_from_h5(feature_dir, channel_order)
+    if hasattr(coords_um, 'dtype') and hasattr(coords_um, 'shape'):
+        coords_um = np.array(coords_um)
+    else:
+        coords_um = np.array(coords_um[:])
+    coords_um = torch.from_numpy(coords_um).float().to(device)
+
+    # --- Debug prints before model call ---
+    print("[DEBUG] stacked_features.shape:", stacked_features.shape)
+    print("[DEBUG] coords_um.shape:", coords_um.shape)
+    print("[DEBUG] Model class:", type(model))
+    print("[DEBUG] Model use_marker_attention:", getattr(model, 'use_marker_attention', 'N/A'))
+
+    with torch.no_grad():
+        logits, marker_attn, patch_attn = model.vision_transformer(
+            bags=stacked_features,
+            coords=coords_um.unsqueeze(0),
+            mask=None,
+            return_marker_attention=True,
+        )
+        # --- Debug prints after model call ---
+        print("[DEBUG] marker_attn:", type(marker_attn), getattr(marker_attn, 'shape', None))
+        print("[DEBUG] patch_attn:", type(patch_attn), getattr(patch_attn, 'shape', None))
+
+        # Remove batch dimension if present
+        marker_attn = marker_attn.squeeze(0)
+        if patch_attn is not None:
+            patch_attn = patch_attn.squeeze(0)
+        # Aggregate marker attention (use patch_attn if available, else average all)
+        avg_marker_attn = aggregate_marker_attention(marker_attn, patch_attn, top_k_percent)
+        # Save aggregate marker attention PNG (one per sample)
+        slide_output_path = output_path / f"{slide_path.stem}_marker_attention.png"
+        visualize_marker_attention(avg_marker_attn, slide_output_path, channel_order)
+
+        # Per-tile channel argmax heatmap (classic gapless heatmap layout)
+        marker_scores = marker_attn.sum(dim=1)  # [tiles, markers]
+        most_influential_marker = marker_scores.argmax(dim=1).cpu().numpy()  # [tiles]
+
+        # Reshape to 2D grid for classic heatmap
+        # Try to infer grid shape from coords (assume regular grid)
+        coords_np = coords_um.cpu().numpy() if torch.is_tensor(coords_um) else coords_um
+        # Find unique x and y, sort them
+        x_unique = np.unique(coords_np[:, 0])
+        y_unique = np.unique(coords_np[:, 1])
+        x_unique.sort()
+        y_unique.sort()
+        # Map each coord to its grid index
+        x_idx = np.searchsorted(x_unique, coords_np[:, 0])
+        y_idx = np.searchsorted(y_unique, coords_np[:, 1])
+        grid = np.full((len(y_unique), len(x_unique)), -1, dtype=int)
+        grid[y_idx, x_idx] = most_influential_marker
+
+        # Create colormap and legend
+        from matplotlib.colors import ListedColormap
+        cmap = plt.get_cmap('tab20')
+        if isinstance(cmap, ListedColormap):
+            # cmap.colors is usually a numpy array of shape (N, 3) or (N, 4)
+            cmap_colors = cmap.colors
+            def to_float_tuple(c):
+                # Convert to tuple of floats, only if length 3 or 4
+                if isinstance(c, (list, tuple, np.ndarray)) and len(c) in (3, 4):
+                    return tuple(float(x) for x in c)
+                raise TypeError(f"Color {c} is not a valid RGB(A) tuple.")
+            if isinstance(cmap_colors, np.ndarray):
+                colors = [to_float_tuple(c) for c in cmap_colors.tolist()]
+            elif isinstance(cmap_colors, (list, tuple)):
+                colors = [to_float_tuple(c) for c in cmap_colors]
+            else:
+                raise TypeError("cmap.colors is not iterable as expected.")
+        else:
+            raise TypeError("The colormap 'tab20' is not a ListedColormap and has no 'colors' attribute.")
+        marker_colors = [colors[i % len(colors)] for i in range(len(channel_order))]
+        custom_cmap = ListedColormap(marker_colors)
+
+        plt.figure(figsize=(10, 10))
+        im = plt.imshow(grid, cmap=custom_cmap, origin='lower', aspect='equal', interpolation='none', vmin=0, vmax=len(channel_order)-1)
+        # Create legend
+        import matplotlib.patches as mpatches
+        # Only use RGB or RGBA tuples for legend colors, ensure correct length
+        legend_handles = []
+        for i in range(len(channel_order)):
+            color = marker_colors[i]
+            if isinstance(color, tuple):
+                if len(color) == 3:
+                    legend_handles.append(mpatches.Patch(color=(float(color[0]), float(color[1]), float(color[2])), label=channel_order[i]))
+                elif len(color) == 4:
+                    legend_handles.append(mpatches.Patch(color=(float(color[0]), float(color[1]), float(color[2]), float(color[3])), label=channel_order[i]))
+                else:
+                    # Truncate or pad to exactly 3 floats (RGB)
+                    rgb_list = [float(x) for x in color]
+                    rgb = tuple((rgb_list + [0.0, 0.0, 0.0])[:3])
+                    legend_handles.append(mpatches.Patch(color=rgb, label=channel_order[i]))
+            else:
+                # Fallback: skip or use default color
+                legend_handles.append(mpatches.Patch(label=channel_order[i]))
+        plt.legend(handles=legend_handles, bbox_to_anchor=(1.05, 1), loc='upper left', borderaxespad=0.)
+        plt.title("Most Influential Marker per Tile (Heatmap)")
+        plt.axis('off')
+        plt.tight_layout()
+        plt.savefig(output_path / f"{slide_path.stem}_influential_marker_heatmap.png", bbox_inches='tight')
+        plt.close()
