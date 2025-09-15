@@ -90,7 +90,7 @@ class _TileDataset(IterableDataset):
         brightness_cutoff: int | None,
         canny_cutoff: float | None,
         default_slide_mpp: SlideMPP,
-        mask: np.ndarray | None = None,  # <-- Add this
+        mask: np.ndarray | None = None,  
     ) -> None:
         self.slide_path = slide_path
         self.cache_dir = cache_dir
@@ -315,7 +315,7 @@ def extract_(
                 brightness_cutoff=brightness_cutoff,
                 canny_cutoff=canny_cutoff,
                 default_slide_mpp=default_slide_mpp,
-                mask=mask,  # <-- Pass mask here
+                mask=mask,  
             )
             # Parallelism is implemented in the dataset iterator already, so one worker is enough!
             dl = DataLoader(ds, batch_size=64, num_workers=1, drop_last=False)

@@ -1,4 +1,3 @@
-
 import h5py
 import torch
 import matplotlib.pyplot as plt
@@ -64,7 +63,11 @@ def load_multiplex_features(feature_dir: Path, channel_order: list[str]) -> torc
             features_per_marker.append(zero_feats)
         else:
             with h5py.File(found_file, "r") as h5:
-                feats = torch.from_numpy(h5["feats"][:]).float()
+                feats_obj = h5["feats"]
+                if isinstance(feats_obj, h5py.Dataset):
+                    feats = torch.from_numpy(feats_obj[:]).float()
+                else:
+                    raise RuntimeError(f'"feats" in {found_file} is not a dataset (found {type(feats_obj)}).')
                 features_per_marker.append(feats)
     stacked_features = torch.stack(features_per_marker)
     return stacked_features
@@ -80,7 +83,11 @@ def load_coords_from_h5(feature_dir: Path, channel_order: list[str]) -> np.ndarr
         for f in all_files:
             if marker_lower in f.name.lower():
                 with h5py.File(f, "r") as h5:
-                    coords = h5["coords"][:]
+                    coords_obj = h5["coords"]
+                    if isinstance(coords_obj, h5py.Dataset):
+                        coords = coords_obj[:]
+                    else:
+                        raise RuntimeError(f'"coords" in {f} is not a dataset (found {type(coords_obj)}).')
                 return coords
     raise FileNotFoundError("No marker h5 file with coords found in feature_dir.")
 
@@ -244,17 +251,23 @@ def attention_heatmap_(
         legend_handles = []
         for i in range(len(channel_order)):
             color = marker_colors[i]
-            if isinstance(color, tuple):
-                if len(color) == 3:
-                    legend_handles.append(mpatches.Patch(color=(float(color[0]), float(color[1]), float(color[2])), label=channel_order[i]))
-                elif len(color) == 4:
-                    legend_handles.append(mpatches.Patch(color=(float(color[0]), float(color[1]), float(color[2]), float(color[3])), label=channel_order[i]))
-                else:
-                    rgb_list = [float(x) for x in color]
-                    rgb = tuple((rgb_list + [0.0, 0.0, 0.0])[:3])
-                    legend_handles.append(mpatches.Patch(color=rgb, label=channel_order[i]))
+            # Ensure color is a tuple of exactly 3 or 4 floats
+            if isinstance(color, (list, np.ndarray)):
+                color = tuple(float(x) for x in color)
+            if len(color) == 3:
+                legend_handles.append(
+                    mpatches.Patch(color=(color[0], color[1], color[2]), label=channel_order[i])  # type: ignore
+                )
+            elif len(color) == 4:
+                legend_handles.append(
+                    mpatches.Patch(color=(color[0], color[1], color[2], color[3]), label=channel_order[i])  # type: ignore
+                )
             else:
-                legend_handles.append(mpatches.Patch(label=channel_order[i]))
+                # fallback: use first 3 values
+                rgb = tuple(float(x) for x in (list(color) + [0.0, 0.0, 0.0])[:3])
+                legend_handles.append(
+                    mpatches.Patch(color=rgb, label=channel_order[i])  # type: ignore
+                )
         ax_hm.legend(handles=legend_handles, bbox_to_anchor=(1.05, 1), loc='upper left', borderaxespad=0.)
         ax_hm.set_title("Most Influential Marker per Tile (Heatmap)")
         ax_hm.axis('off')

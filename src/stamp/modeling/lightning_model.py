@@ -102,7 +102,7 @@ class LitVisionTransformer(lightning.LightningModule):
             use_alibi=use_alibi,
             use_marker_attention=use_marker_attention,
             marker_hidden_dim=marker_hidden_dim,
-            total_steps=total_steps,  # <-- Pass here if needed
+            total_steps=total_steps,  
         )
         self.class_weights = category_weights
         self.valid_auroc = MulticlassAUROC(len(categories))
