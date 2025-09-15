@@ -191,6 +191,63 @@ we can run it by invoking:
 stamp --config stamp-test-experiment/config.yaml crossval
 ```
 
+
+## Multiplex Analysis
+
+Stamp supports multiplexed marker analysis, allowing you to process and analyze data with multiple marker channels (e.g., CD3, CD8, DAPI) per sample.
+
+### Required Configuration Changes
+
+1. **Specify Marker Channels**
+
+  In your `config.yaml`, add or update the `channel_order` field in the relevant sections (e.g., `preprocessing`, `attention_heatmaps`):
+
+  ```yaml
+  channel_order: ["CD3", "CD8", "CD20", "DAPI"]
+  ```
+
+  The order must match the order of marker `.h5` files for each sample.
+
+2. **Enable Multiplex Mode**
+
+  In the `crossval` section, set:
+
+  ```yaml
+  use_multiplex: true
+  ```
+
+3. **Attention Heatmaps (Optional, for advanced visualization)**
+
+  Add or update the `attention_heatmaps` section:
+
+  ```yaml
+  attention_heatmaps:
+    output_dir: "/path/to/save/files/to"
+    channel_order: ["CD3", "CD8", "CD20", "DAPI"]
+    feature_dir: "/path/your/extracted/features/are/stored/in"
+    wsi_dir: "/path/containing/whole/slide/images/to/extract/features/from"
+    masson_trichrome_path: "/path/to/masson_trichrome_image"
+    checkpoint_path: "/path/to/model.ckpt"
+  ```
+
+### Notes for Multiplex Analysis
+
+- **Feature Extraction:**  Ensure you have one `.h5` feature file per marker per sample, named so that the marker can be identified (e.g., `sample1_CD3.h5`, `sample1_CD8.h5`, etc.).
+- **Order Matters:**  The order in `channel_order` must match the order in which marker files are stacked for each sample.
+- **Downstream Steps:**  All other steps (cross-validation, statistics, etc.) work as described above, but will now use multiplexed features.
+
+### Summary Table
+
+| Step                | Classic Analysis         | Multiplex Analysis (add/change)      |
+|---------------------|-------------------------|--------------------------------------|
+| channel_order       | Not needed or single    | List of marker names                 |
+| use_multiplex       | Not needed              | `use_multiplex: true` in crossval    |
+| Feature files       | One per sample          | One per marker per sample            |
+| attention_heatmaps  | Not needed              | Add section for advanced visualization|
+
+By following these steps and updating your configuration, you can enable and run multiplex analysis with Stamp.
+
+---
 ## Generating Statistics
 
 After training and validating your model, you may want to generate statistics to evaluate its performance.
