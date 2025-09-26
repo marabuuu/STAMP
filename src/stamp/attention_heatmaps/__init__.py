@@ -112,7 +112,7 @@ def attention_heatmap_(
         feature_dir: Path,
         slide_paths: Iterable[Path],
         wsi_dir: Path,
-        masson_trichrome_path: Path,
+        dapi_path: Path,
         device: str,
         output_path: Path,
         channel_order: list[str],  
@@ -211,63 +211,60 @@ def attention_heatmap_(
         marker_colors = [colors[i % len(colors)] for i in range(len(channel_order))]
         custom_cmap = ListedColormap(marker_colors)
 
-        # --- Visualization: Masson trichrome image (left) and heatmap (right) ---
+        # --- Visualization: DAPI image (left) and heatmap (right) ---
         import matplotlib.patches as mpatches
         import os
-        # Load Masson trichrome image (tif)
-        masson_img = None
+        # Load DAPI image (tif)
+        dapi_img = None
         try:
             from tifffile import imread as tiff_imread
-            masson_img = tiff_imread(str(masson_trichrome_path))
+            dapi_img = tiff_imread(str(dapi_path))
         except ImportError:
             try:
                 from PIL import Image
-                masson_img = np.array(Image.open(str(masson_trichrome_path)))
+                dapi_img = np.array(Image.open(str(dapi_path)))
             except Exception as e:
-                print(f"[WARNING] Could not load Masson trichrome image: {e}")
-                masson_img = None
+                print(f"[WARNING] Could not load DAPI image: {e}")
+                dapi_img = None
         except Exception as e:
-            print(f"[WARNING] Could not load Masson trichrome image: {e}")
-            masson_img = None
+            print(f"[WARNING] Could not load DAPI image: {e}")
+            dapi_img = None
 
         fig, axes = plt.subplots(1, 2, figsize=(18, 10), gridspec_kw={'width_ratios': [1, 1.2]})
-        # Left: Masson trichrome image
+        # Left: DAPI image
         ax_img = axes[0]
-        if masson_img is not None:
-            if masson_img.ndim == 2:
-                ax_img.imshow(masson_img, cmap='gray')
+        if dapi_img is not None:
+            if dapi_img.ndim == 2:
+                ax_img.imshow(dapi_img, cmap='gray')
             else:
-                ax_img.imshow(masson_img)
-            ax_img.set_title("Masson Trichrome")
+                ax_img.imshow(dapi_img)
+            ax_img.set_title("DAPI")
         else:
             ax_img.text(0.5, 0.5, "Image not found", ha='center', va='center', fontsize=16)
-            ax_img.set_title("Masson Trichrome (not found)")
+            ax_img.set_title("DAPI (not found)")
         ax_img.axis('off')
 
         # Right: Heatmap
         ax_hm = axes[1]
-        im = ax_hm.imshow(grid, cmap=custom_cmap, origin='lower', aspect='equal', interpolation='none', vmin=0, vmax=len(channel_order)-1)
+        N = len(channel_order)
+        # Create a ListedColormap for your markers
+        cmap = plt.get_cmap('tab20', N)
+        # Set color for missing tiles (-1) to black
+        cmap = cmap.with_extremes(bad='black')
+
+        # Mask grid positions where grid == -1 (these are missing/rejected tiles)
+        masked_grid = np.ma.masked_where(grid == -1, grid)
+
+        # Plot with vmin=-1 so -1 is mapped to "bad" (black)
+        im = ax_hm.imshow(masked_grid, cmap=cmap, origin='lower', aspect='equal', interpolation='none', vmin=-1, vmax=N-1)
+
         # Only use RGB or RGBA tuples for legend colors, ensure correct length
         legend_handles = []
-        for i in range(len(channel_order)):
-            color = marker_colors[i]
-            # Ensure color is a tuple of exactly 3 or 4 floats
-            if isinstance(color, (list, np.ndarray)):
-                color = tuple(float(x) for x in color)
-            if len(color) == 3:
-                legend_handles.append(
-                    mpatches.Patch(color=(color[0], color[1], color[2]), label=channel_order[i])  # type: ignore
-                )
-            elif len(color) == 4:
-                legend_handles.append(
-                    mpatches.Patch(color=(color[0], color[1], color[2], color[3]), label=channel_order[i])  # type: ignore
-                )
-            else:
-                # fallback: use first 3 values
-                rgb = tuple(float(x) for x in (list(color) + [0.0, 0.0, 0.0])[:3])
-                legend_handles.append(
-                    mpatches.Patch(color=rgb, label=channel_order[i])  # type: ignore
-                )
+        for i in range(N):
+            color = cmap(i)
+            legend_handles.append(
+                mpatches.Patch(color=color, label=channel_order[i])
+            )
         ax_hm.legend(handles=legend_handles, bbox_to_anchor=(1.05, 1), loc='upper left', borderaxespad=0.)
         ax_hm.set_title("Most Influential Marker per Tile (Heatmap)")
         ax_hm.axis('off')
