@@ -277,20 +277,14 @@ def attention_heatmap_(
     # 7. VISUALIZE SIDE-BY-SIDE: OVERLAY + HEATMAP
     fig, axes = plt.subplots(1, 2, figsize=(18, 10), 
                              gridspec_kw={'width_ratios': [1, 1.2]})
-    
-    # Left: Multiplex image (renamed from "Dominant Marker Overlay")
-    axes[0].imshow(canvas, vmin=0, vmax=1)
+
+    # Left: Multiplex image (match heatmap height)
+    axes[0].imshow(canvas, vmin=0, vmax=1, aspect='auto')
     axes[0].set_title("Multiplex image", fontsize=14)
     axes[0].axis('off')
-    
-    # Add legend to the overlay
-    legend = axes[0].legend(handles=legend_patches, 
-                          loc='upper right',
-                          bbox_to_anchor=(1.0, 1.0),
-                          frameon=True,
-                          framealpha=0.8,
-                          fontsize=9)
-    legend.get_frame().set_facecolor('white')
+
+    # Remove custom legend from axes[1] (heatmap)
+    # Only use the colorbar for legend
     
     # Right: Attention heatmap (with corrected orientation)
     # Mask grid positions where grid == -1 (filtered tiles)
@@ -303,9 +297,10 @@ def attention_heatmap_(
     axes[1].axis('off')
 
     # Create custom colorbar matching the heatmap (with correct ordering)
+    # Use marker order as in channel_order 
     cbar = plt.colorbar(im, ax=axes[1], fraction=0.046, pad=0.04)
-    cbar.set_ticks(list(map(float, range(len(channel_order)))))
-    cbar.set_ticklabels(channel_order)
+    cbar.set_ticks(list(map(float, range(len(channel_order)))));
+    cbar.set_ticklabels([m.replace("antibody", "autofluorescence") for m in channel_order])
     
     # Save the composite figure
     composite_path = output_path / f"{slide_path.stem}_composite.png"
