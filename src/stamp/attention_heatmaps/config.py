@@ -7,7 +7,7 @@ class AttentionHeatmapConfig(BaseModel):
     output_dir: Path
     feature_dir: Path
     wsi_dir: Path
-    dapi_path: Path
+    marker_image_paths: list[Path]
     checkpoint_path: Path
     slide_paths: list[Path] | None = None
     device: str = "cuda"

@@ -5,10 +5,18 @@ import numpy as np
 from pathlib import Path
 from typing import Iterable
 from stamp.preprocessing import supported_extensions
+import os
+import tifffile
+import matplotlib
+import matplotlib.colors
+import matplotlib.patches as mpatches
+from matplotlib.colors import ListedColormap
+from stamp.modeling.lightning_model import LitVisionTransformer
+import re
 
 def aggregate_marker_attention(
-    marker_attn, 
-    patch_attn=None, 
+    marker_attn,
+    patch_attn=None,
     top_k_percent=0.1):
     """
     marker_attn: Tensor [patches, markers, markers]
@@ -34,7 +42,6 @@ def load_multiplex_features(feature_dir: Path, channel_order: list[str]) -> torc
     features_per_marker = []
     all_files = list(feature_dir.glob("*.h5"))
     all_files_lower = {f.name.lower(): f for f in all_files}
-
     for marker in channel_order:
         marker_lower = marker.lower()
         # Find the first file that contains the marker name (case-insensitive)
@@ -68,7 +75,7 @@ def load_multiplex_features(feature_dir: Path, channel_order: list[str]) -> torc
                     feats = torch.from_numpy(feats_obj[:]).float()
                 else:
                     raise RuntimeError(f'"feats" in {found_file} is not a dataset (found {type(feats_obj)}).')
-                features_per_marker.append(feats)
+            features_per_marker.append(feats)
     stacked_features = torch.stack(features_per_marker)
     return stacked_features
 
@@ -88,13 +95,13 @@ def load_coords_from_h5(feature_dir: Path, channel_order: list[str]) -> np.ndarr
                         coords = coords_obj[:]
                     else:
                         raise RuntimeError(f'"coords" in {f} is not a dataset (found {type(coords_obj)}).')
-                return coords
+                    return coords
     raise FileNotFoundError("No marker h5 file with coords found in feature_dir.")
 
 def visualize_marker_attention(
-        avg_marker_attn, 
-        output_path, 
-        channel_order=None): 
+    avg_marker_attn,
+    output_path,
+    channel_order=None):
     plt.figure(figsize=(8, 6))
     plt.imshow(avg_marker_attn.cpu().numpy(), cmap="hot")
     plt.colorbar()
@@ -107,33 +114,30 @@ def visualize_marker_attention(
     plt.close()
 
 def attention_heatmap_(
-        *,
-        checkpoint_path: Path,
-        feature_dir: Path,
-        slide_paths: Iterable[Path],
-        wsi_dir: Path,
-        dapi_path: Path,
-        device: str,
-        output_path: Path,
-        channel_order: list[str],  
-        top_k_percent=0.1,
+    *,
+    checkpoint_path: Path,
+    feature_dir: Path,
+    slide_paths: Iterable[Path],
+    wsi_dir: Path,
+    marker_image_paths: list[Path],
+    device: str,
+    output_path: Path,
+    channel_order: list[str],  
+    top_k_percent=0.1,
     ):
-    from stamp.modeling.lightning_model import LitVisionTransformer
-
+    # Create output directory if it doesn't exist
+    output_path.mkdir(parents=True, exist_ok=True)
+    
     model = LitVisionTransformer.load_from_checkpoint(checkpoint_path).to(device).eval()
-
     # Fallback: if slide_paths is None or empty, use all slides in wsi_dir
     if not slide_paths:
         slide_paths = [
             p for ext in supported_extensions for p in Path(wsi_dir).glob(f"**/*{ext}")
         ]
-
-
     # --- Only run once per sample, not per marker file ---
     # Assume all marker files in feature_dir belong to the same sample
     # Use the first slide_path for naming output files
     slide_path = next(iter(slide_paths)) if slide_paths else Path(feature_dir)
-
     # Load all features and coords once
     stacked_features = load_multiplex_features(feature_dir, channel_order).to(device)
     stacked_features = stacked_features.permute(0, 2, 1).unsqueeze(0)  # [1, markers, features, tiles]
@@ -143,13 +147,11 @@ def attention_heatmap_(
     else:
         coords_um = np.array(coords_um[:])
     coords_um = torch.from_numpy(coords_um).float().to(device)
-
     # --- Debug prints before model call ---
     print("[DEBUG] stacked_features.shape:", stacked_features.shape)
     print("[DEBUG] coords_um.shape:", coords_um.shape)
     print("[DEBUG] Model class:", type(model))
     print("[DEBUG] Model use_marker_attention:", getattr(model, 'use_marker_attention', 'N/A'))
-
     with torch.no_grad():
         logits, marker_attn, patch_attn = model.vision_transformer(
             bags=stacked_features,
@@ -157,118 +159,149 @@ def attention_heatmap_(
             mask=None,
             return_marker_attention=True,
         )
-        # --- Debug prints after model call ---
-        print("[DEBUG] marker_attn:", type(marker_attn), getattr(marker_attn, 'shape', None))
-        print("[DEBUG] patch_attn:", type(patch_attn), getattr(patch_attn, 'shape', None))
-
-        # Remove batch dimension if present
-        marker_attn = marker_attn.squeeze(0)
-        if patch_attn is not None:
-            patch_attn = patch_attn.squeeze(0)
-        # Aggregate marker attention (use patch_attn if available, else average all)
-        avg_marker_attn = aggregate_marker_attention(marker_attn, patch_attn, top_k_percent)
-        # Save aggregate marker attention PNG (one per sample)
-        slide_output_path = output_path / f"{slide_path.stem}_marker_attention.png"
-        visualize_marker_attention(avg_marker_attn, slide_output_path, channel_order)
-
-        # Per-tile channel argmax heatmap (classic gapless heatmap layout)
-        marker_scores = marker_attn.sum(dim=1)  # [tiles, markers]
-        most_influential_marker = marker_scores.argmax(dim=1).cpu().numpy()  # [tiles]
-
-        # Reshape to 2D grid for classic heatmap
-        # Try to infer grid shape from coords (assume regular grid)
-        coords_np = coords_um.cpu().numpy() if torch.is_tensor(coords_um) else coords_um
-        # Find unique x and y, sort them
-        x_unique = np.unique(coords_np[:, 0])
-        y_unique = np.unique(coords_np[:, 1])
-        x_unique.sort()
-        y_unique.sort()
-        # Map each coord to its grid index
-        x_idx = np.searchsorted(x_unique, coords_np[:, 0])
-        y_idx = np.searchsorted(y_unique, coords_np[:, 1])
-        grid = np.full((len(y_unique), len(x_unique)), -1, dtype=int)
-        grid[y_idx, x_idx] = most_influential_marker
-
-        # Create colormap and legend
-        from matplotlib.colors import ListedColormap
-        cmap = plt.get_cmap('tab20')
-        if isinstance(cmap, ListedColormap):
-            # cmap.colors is usually a numpy array of shape (N, 3) or (N, 4)
-            cmap_colors = cmap.colors
-            def to_float_tuple(c):
-                # Convert to tuple of floats, only if length 3 or 4
-                if isinstance(c, (list, tuple, np.ndarray)) and len(c) in (3, 4):
-                    return tuple(float(x) for x in c)
-                raise TypeError(f"Color {c} is not a valid RGB(A) tuple.")
-            if isinstance(cmap_colors, np.ndarray):
-                colors = [to_float_tuple(c) for c in cmap_colors.tolist()]
-            elif isinstance(cmap_colors, (list, tuple)):
-                colors = [to_float_tuple(c) for c in cmap_colors]
-            else:
-                raise TypeError("cmap.colors is not iterable as expected.")
+    # --- Debug prints after model call ---
+    print("[DEBUG] marker_attn:", type(marker_attn), getattr(marker_attn, 'shape', None))
+    print("[DEBUG] patch_attn:", type(patch_attn), getattr(patch_attn, 'shape', None))
+    # Remove batch dimension if present
+    marker_attn = marker_attn.squeeze(0)
+    if patch_attn is not None:
+        patch_attn = patch_attn.squeeze(0)
+    # Aggregate marker attention (use patch_attn if available, else average all)
+    avg_marker_attn = aggregate_marker_attention(marker_attn, patch_attn, top_k_percent)
+    # Save aggregate marker attention PNG (one per sample)
+    slide_output_path = output_path / f"{slide_path.stem}_marker_attention.png"
+    visualize_marker_attention(avg_marker_attn, slide_output_path, channel_order)
+    # Per-tile channel argmax heatmap (classic gapless heatmap layout)
+    marker_scores = marker_attn.sum(dim=1)  # [tiles, markers]
+    most_influential_marker = marker_scores.argmax(dim=1).cpu().numpy()  # [tiles]
+    # Reshape to 2D grid for classic heatmap
+    # Try to infer grid shape from coords (assume regular grid)
+    coords_np = coords_um.cpu().numpy() if torch.is_tensor(coords_um) else coords_um
+    # Find unique x and y, sort them
+    x_unique = np.unique(coords_np[:, 0])
+    y_unique = np.unique(coords_np[:, 1])
+    x_unique.sort()
+    y_unique.sort()
+    # Map each coord to its grid index
+    x_idx = np.searchsorted(x_unique, coords_np[:, 0])
+    y_idx = np.searchsorted(y_unique, coords_np[:, 1])
+    grid = np.full((len(y_unique), len(x_unique)), -1, dtype=int)
+    grid[y_idx, x_idx] = most_influential_marker
+    
+    # === CRITICAL SECTION: FIXED FLUORESCENCE OVERLAY ===
+    # 1. VERIFY AND ORDER CHANNELS TO MATCH channel_order
+    print("\nVerifying channel order matching:")
+    marker_image_paths_ordered = []
+    for marker in channel_order:
+        # Case-insensitive matching with flexible pattern matching
+        pattern = re.compile(re.escape(marker.lower()))
+        match = [p for p in marker_image_paths 
+                 if pattern.search(p.name.lower())]
+        
+        if not match:
+            # Try removing common prefixes/suffixes
+            simple_marker = re.sub(r'[_\-\.]', '', marker.lower())
+            match = [p for p in marker_image_paths 
+                     if simple_marker in re.sub(r'[_\-\.]', '', p.name.lower())]
+        
+        if match:
+            print(f"  ✓ {marker} -> {match[0].name}")
+            marker_image_paths_ordered.append(match[0])
         else:
-            raise TypeError("The colormap 'tab20' is not a ListedColormap and has no 'colors' attribute.")
-        marker_colors = [colors[i % len(colors)] for i in range(len(channel_order))]
-        custom_cmap = ListedColormap(marker_colors)
-
-        # --- Visualization: DAPI image (left) and heatmap (right) ---
-        import matplotlib.patches as mpatches
-        import os
-        # Load DAPI image (tif)
-        dapi_img = None
-        try:
-            from tifffile import imread as tiff_imread
-            dapi_img = tiff_imread(str(dapi_path))
-        except ImportError:
-            try:
-                from PIL import Image
-                dapi_img = np.array(Image.open(str(dapi_path)))
-            except Exception as e:
-                print(f"[WARNING] Could not load DAPI image: {e}")
-                dapi_img = None
-        except Exception as e:
-            print(f"[WARNING] Could not load DAPI image: {e}")
-            dapi_img = None
-
-        fig, axes = plt.subplots(1, 2, figsize=(18, 10), gridspec_kw={'width_ratios': [1, 1.2]})
-        # Left: DAPI image
-        ax_img = axes[0]
-        if dapi_img is not None:
-            if dapi_img.ndim == 2:
-                ax_img.imshow(dapi_img, cmap='gray')
+            print(f"  ✗ {marker} not found in provided images!")
+            # Create a blank image as placeholder
+            with tifffile.TiffFile(marker_image_paths[0]) as tif:
+                h, w = tif.pages[0].shape[:2]
+            blank = np.zeros((h, w), dtype=np.float32)
+            temp_path = output_path / f"missing_{marker}.tiff"
+            tifffile.imwrite(str(temp_path), blank)
+            marker_image_paths_ordered.append(temp_path)
+            print(f"    Created placeholder: {temp_path.name}")
+    
+    marker_image_paths = marker_image_paths_ordered
+    
+    # 2. LOAD AND PREPROCESS IMAGES WITH LOG NORMALIZATION
+    marker_imgs = []
+    for img_path in marker_image_paths:
+        img = tifffile.imread(str(img_path))
+        if img.ndim == 3:  # Handle RGB TIFFs (common in fluorescence)
+            # Take first channel or convert to grayscale
+            if img.shape[2] == 3:
+                img = img.mean(axis=2)
             else:
-                ax_img.imshow(dapi_img)
-            ax_img.set_title("DAPI")
+                img = img[:, :, 0]  # Use first channel for multi-channel TIFFs
+        marker_imgs.append(img.astype(np.float32))
+    
+    # 3. LOG NORMALIZATION (better dynamic range than linear)
+    norm_imgs = []
+    for img in marker_imgs:
+        # Log(1+x) compression handles high dynamic range better
+        img_log = np.log1p(img)  
+        # Normalize to [0, 1] per channel
+        img_min, img_max = img_log.min(), img_log.max()
+        if img_max > img_min:
+            img_norm = (img_log - img_min) / (img_log.max() - img_min)
         else:
-            ax_img.text(0.5, 0.5, "Image not found", ha='center', va='center', fontsize=16)
-            ax_img.set_title("DAPI (not found)")
-        ax_img.axis('off')
-
-        # Right: Heatmap
-        ax_hm = axes[1]
-        N = len(channel_order)
-        # Create a ListedColormap for your markers
-        cmap = plt.get_cmap('tab20', N)
-        # Set color for missing tiles (-1) to black
-        cmap = cmap.with_extremes(bad='black')
-
-        # Mask grid positions where grid == -1 (these are missing/rejected tiles)
-        masked_grid = np.ma.masked_where(grid == -1, grid)
-
-        # Plot with vmin=-1 so -1 is mapped to "bad" (black)
-        im = ax_hm.imshow(masked_grid, cmap=cmap, origin='lower', aspect='equal', interpolation='none', vmin=-1, vmax=N-1)
-
-        # Only use RGB or RGBA tuples for legend colors, ensure correct length
-        legend_handles = []
-        for i in range(N):
-            color = cmap(i)
-            legend_handles.append(
-                mpatches.Patch(color=color, label=channel_order[i])
-            )
-        ax_hm.legend(handles=legend_handles, bbox_to_anchor=(1.05, 1), loc='upper left', borderaxespad=0.)
-        ax_hm.set_title("Most Influential Marker per Tile (Heatmap)")
-        ax_hm.axis('off')
-
-        plt.tight_layout()
-        plt.savefig(output_path / f"{slide_path.stem}_influential_marker_heatmap.png", bbox_inches='tight')
-        plt.close()
+            img_norm = np.zeros_like(img_log)
+        norm_imgs.append(img_norm)
+    
+    # 4. MAX-INTENSITY PROJECTION (Napari-style)
+    all_norm = np.stack(norm_imgs, axis=-1)  # [H, W, N_channels]
+    max_index = np.argmax(all_norm, axis=-1)  # Dominant channel per pixel
+    max_value = np.max(all_norm, axis=-1)     # Strength of dominant channel
+    
+    # Apply threshold to suppress weak signals (optional but recommended)
+    threshold = np.percentile(max_value, 5)  # Top 95% of pixels
+    max_value[max_value < threshold] = 0
+    
+    # 5. COLOR MAPPING WITH TAB20
+    cmap = plt.get_cmap('tab20', len(channel_order))
+    colors = np.array([cmap(i)[:3] for i in range(len(channel_order))])  # RGB only
+    
+    # Create output canvas with dark background
+    canvas = np.zeros((*max_index.shape, 3), dtype=np.float32)
+    for i in range(len(channel_order)):
+        mask = (max_index == i)
+        canvas[mask] = colors[i] * max_value[mask, np.newaxis]
+    
+    # 6. CREATE LEGEND FOR CHANNELS
+    legend_patches = []
+    for i, marker in enumerate(channel_order):
+        legend_patches.append(mpatches.Patch(color=colors[i], label=marker))
+    
+    # 7. VISUALIZE SIDE-BY-SIDE: OVERLAY + HEATMAP
+    fig, axes = plt.subplots(1, 2, figsize=(18, 10), 
+                             gridspec_kw={'width_ratios': [1, 1.2]})
+    
+    # Left: Dominant channel visualization (fixed overlay)
+    axes[0].imshow(canvas, vmin=0, vmax=1)
+    axes[0].set_title("Dominant Marker Overlay (Napari-style)", fontsize=14)
+    axes[0].axis('off')
+    
+    # Add legend to the overlay
+    legend = axes[0].legend(handles=legend_patches, 
+                          loc='upper right',
+                          bbox_to_anchor=(1.0, 1.0),
+                          frameon=True,
+                          framealpha=0.8,
+                          fontsize=9)
+    legend.get_frame().set_facecolor('white')
+    
+    # Right: Attention heatmap
+    im = axes[1].imshow(grid, cmap='tab20', vmin=0, vmax=len(channel_order)-1)
+    axes[1].set_title("Most Influential Marker per Tile", fontsize=14)
+    axes[1].axis('off')
+    
+    # Create custom colorbar matching the heatmap
+    cbar = plt.colorbar(im, ax=axes[1], fraction=0.046, pad=0.04)
+    cbar.set_ticks(list(map(float, range(len(channel_order)))))
+    cbar.set_ticklabels(channel_order)
+    
+    # Save the composite figure
+    composite_path = output_path / f"{slide_path.stem}_composite.png"
+    plt.tight_layout()
+    plt.savefig(composite_path, dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    print(f"\nSuccessfully saved composite visualization to: {composite_path}")
+    return composite_path
