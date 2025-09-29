@@ -209,14 +209,17 @@ def attention_heatmap_(
             marker_image_paths_ordered.append(match[0])
         else:
             print(f"  ✗ {marker} not found in provided images!")
-            # Create a blank image as placeholder
-            with tifffile.TiffFile(marker_image_paths[0]) as tif:
-                h, w = tif.pages[0].shape[:2]
-            blank = np.zeros((h, w), dtype=np.float32)
-            temp_path = output_path / f"missing_{marker}.tiff"
-            tifffile.imwrite(str(temp_path), blank)
-            marker_image_paths_ordered.append(temp_path)
-            print(f"    Created placeholder: {temp_path.name}")
+            # Create a blank image as placeholder (but skip for no_antibody)
+            if marker != "no_antibody":  # Skip placeholder for no_antibody
+                with tifffile.TiffFile(marker_image_paths[0]) as tif:
+                    h, w = tif.pages[0].shape[:2]
+                blank = np.zeros((h, w), dtype=np.float32)
+                temp_path = output_path / f"missing_{marker}.tiff"
+                tifffile.imwrite(str(temp_path), blank)
+                marker_image_paths_ordered.append(temp_path)
+                print(f"    Created placeholder: {temp_path.name}")
+            else:
+                print("    Skipping placeholder for no_antibody (not needed)")
     
     marker_image_paths = marker_image_paths_ordered
     
@@ -264,18 +267,20 @@ def attention_heatmap_(
         mask = (max_index == i)
         canvas[mask] = colors[i] * max_value[mask, np.newaxis]
     
-    # 6. CREATE LEGEND FOR CHANNELS
+    # 6. CREATE LEGEND FOR CHANNELS (with "antibody" -> "autofluorescence")
     legend_patches = []
     for i, marker in enumerate(channel_order):
-        legend_patches.append(mpatches.Patch(color=colors[i], label=marker))
+        # Replace "antibody" with "autofluorescence" in the label
+        display_name = marker.replace("antibody", "autofluorescence")
+        legend_patches.append(mpatches.Patch(color=colors[i], label=display_name))
     
     # 7. VISUALIZE SIDE-BY-SIDE: OVERLAY + HEATMAP
     fig, axes = plt.subplots(1, 2, figsize=(18, 10), 
                              gridspec_kw={'width_ratios': [1, 1.2]})
     
-    # Left: Dominant channel visualization (fixed overlay)
+    # Left: Multiplex image (renamed from "Dominant Marker Overlay")
     axes[0].imshow(canvas, vmin=0, vmax=1)
-    axes[0].set_title("Dominant Marker Overlay (Napari-style)", fontsize=14)
+    axes[0].set_title("Multiplex image", fontsize=14)
     axes[0].axis('off')
     
     # Add legend to the overlay
@@ -287,12 +292,17 @@ def attention_heatmap_(
                           fontsize=9)
     legend.get_frame().set_facecolor('white')
     
-    # Right: Attention heatmap
-    im = axes[1].imshow(grid, cmap='tab20', vmin=0, vmax=len(channel_order)-1)
+    # Right: Attention heatmap (with corrected orientation)
+    # Mask grid positions where grid == -1 (filtered tiles)
+    masked_grid = np.ma.masked_where(grid == -1, grid)
+    # Use tab20 colormap and set masked color to black
+    cmap_heatmap = plt.get_cmap('tab20', len(channel_order)).with_extremes(bad='black')
+    # Flip the grid vertically to match the overlay orientation
+    im = axes[1].imshow(np.flipud(masked_grid), cmap=cmap_heatmap, vmin=0, vmax=len(channel_order)-1)
     axes[1].set_title("Most Influential Marker per Tile", fontsize=14)
     axes[1].axis('off')
-    
-    # Create custom colorbar matching the heatmap
+
+    # Create custom colorbar matching the heatmap (with correct ordering)
     cbar = plt.colorbar(im, ax=axes[1], fraction=0.046, pad=0.04)
     cbar.set_ticks(list(map(float, range(len(channel_order)))))
     cbar.set_ticklabels(channel_order)
