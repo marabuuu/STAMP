@@ -49,6 +49,12 @@ Stamp currently supports the following feature extractors:
   - [UNI][uni]
   - [Virchow2][virchow2]
 
+  For multiplex image analysis, feature extractors that have seen IHC/different stainings make more sense which are from the available ones:
+  - [CONCH][conch]
+  - [UNI2][uni2]
+  - [Virchow2][virchow2]
+  - [Gigapath][gigapath]
+
 As some of the above require you to request access to the model on huggingface,
 we will stick with ctranspath for this example.
 
@@ -67,10 +73,17 @@ in the `preprocessing` section
 to contain the absolute paths of the directory the configuration file resides in.
 `wsi_dir` Needs to point to a path containing the WSIs you want to extract features from.
 
+Currently, different marker channels need to be provided as separate tiff files to the pipeline.
+Hereby, use `channel_order` to indicate the wished marker channel order. 
+`dapi_index` can be used if there are multiple DAPI files present for one sample and choose only one for further processing as it is used for black tiles filtering. 
+`exclude_bgsub` can be set to true if there are background subtracted images that should not be included in the analysis.
+
 The `cache_dir` will be used to save intermediate data.
 Should you decide to try another feature extractor later,
 using the same cache dir again will significantly speed up the extraction process.
 If you will only extract features once, it can be set to `none`.
+
+Brightness-based tiles rejection and background removal by Canny edge detection algorithm had to be removed which is why we need to set `brightness_cutoff` and `canny_cutoff` to null
 
 ```yaml
 # stamp-test-experiment/config.yaml
@@ -78,9 +91,12 @@ If you will only extract features once, it can be set to `none`.
 preprocessing:
   output_dir: "/absolute/path/to/stamp-test-experiment"
   wsi_dir: "/absolute/path/to/wsi_dir"
+  channel_order: ["list", "of", "markers"]  # e.g. ["CD3", "CD8", "CD20", "DAPI"]
+  dapi_index: 0 # If multiple DAPI takes are available choose the take to support black tiles filtering
+  exclude_bgsub: true # exclude all files that are already background-subtracted
 
-  # Other possible values are "mahmood-uni" and "mahmood-conch"
-  extractor: "ctranspath"
+  # Other possible values are "mahmood-conch"
+  extractor: "mahmood-uni2"
 
   # Having a cache dir will speed up extracting features multiple times,
   # e.g. with different feature extractors.
@@ -94,9 +110,17 @@ preprocessing:
   # Set this to "cpu" if you do not have a CUDA-capable GPU.
   device: "cuda"
 
+  # Tiler parameters.  The defaults work well for most domains and feature extractors.
+  #tile_size_um: 256.0
+  #tile_size_px: 224
+  #default_slide_mpp: 0.5
+
   # How many workers to use for tile extraction.  Should be less or equal to
   # the number of cores of your system.
   max_workers: 8
+
+  brightness_cutoff: null
+  canny_cutoff: null
 ```
 
 Extracting the features is then as easy as running
@@ -146,15 +170,17 @@ either in excel or `.csv` format,
 with contents as described below.
 Finally, `ground_truth_label` needs to contain the column name
 of the data we want to train our model on.
+`patient_label` and `filename_label` can be used to specify which column headers to look for in the slide table.
 Stamp only can be used to train neural networks for categorical targets.
-We recommend explicitly setting the possible classes using the `categories` field.
+`n_splits` specifies how many folds for crossvalidation are used.
+`use_multiplex` should be set to `true` if a multiplex dataset is used
 
 ```yaml
 # stamp-test-experiment/config.yaml
 
 crossval:
   output_dir: "/absolute/path/to/stamp-test-experiment"
-
+  channel_order: ["list", "of", "markers"]  # e.g. ["CD3", "CD8", "CD20", "DAPI"]
   # An excel (.xlsx) or CSV (.csv) table containing the clinical information of
   # patients.  Patients not present in this file will be ignored during training.
   # Has to contain at least two columns, one titled "PATIENT", containing a patient ID,
@@ -176,13 +202,17 @@ crossval:
   ground_truth_label: "isMSIH"
 
   # Optional settings:
+  patient_label: "PATIENT"
+  filename_label: "FILENAME"
 
   # The categories occurring in the target label column of the clini table.
   # If unspecified, they will be inferred from the table itself.
   categories: ["yes", "no"]
 
   # Number of folds to split the data into for cross-validation
-  #n_splits: 5
+  n_splits: 5
+
+  use_multiplex: true
 ```
 
 After specifying all the parameters of our cross-validation,
@@ -191,63 +221,6 @@ we can run it by invoking:
 stamp --config stamp-test-experiment/config.yaml crossval
 ```
 
-
-## Multiplex Analysis
-
-Stamp supports multiplexed marker analysis, allowing you to process and analyze data with multiple marker channels (e.g., CD3, CD8, DAPI) per sample.
-
-### Required Configuration Changes
-
-1. **Specify Marker Channels**
-
-  In your `config.yaml`, add or update the `channel_order` field in the relevant sections (e.g., `preprocessing`, `attention_heatmaps`):
-
-  ```yaml
-  channel_order: ["CD3", "CD8", "CD20", "DAPI"]
-  ```
-
-  The order must match the order of marker `.h5` files for each sample.
-
-2. **Enable Multiplex Mode**
-
-  In the `crossval` section, set:
-
-  ```yaml
-  use_multiplex: true
-  ```
-
-3. **Attention Heatmaps (Optional, for advanced visualization)**
-
-  Add or update the `attention_heatmaps` section:
-
-  ```yaml
-  attention_heatmaps:
-    output_dir: "/path/to/save/files/to"
-    channel_order: ["CD3", "CD8", "CD20", "DAPI"]
-    feature_dir: "/path/your/extracted/features/are/stored/in"
-    wsi_dir: "/path/containing/whole/slide/images/to/extract/features/from"
-    masson_trichrome_path: "/path/to/masson_trichrome_image"
-    checkpoint_path: "/path/to/model.ckpt"
-  ```
-
-### Notes for Multiplex Analysis
-
-- **Feature Extraction:**  Ensure you have one `.h5` feature file per marker per sample, named so that the marker can be identified (e.g., `sample1_CD3.h5`, `sample1_CD8.h5`, etc.).
-- **Order Matters:**  The order in `channel_order` must match the order in which marker files are stacked for each sample.
-- **Downstream Steps:**  All other steps (cross-validation, statistics, etc.) work as described above, but will now use multiplexed features.
-
-### Summary Table
-
-| Step                | Classic Analysis         | Multiplex Analysis (add/change)      |
-|---------------------|-------------------------|--------------------------------------|
-| channel_order       | Not needed or single    | List of marker names                 |
-| use_multiplex       | Not needed              | `use_multiplex: true` in crossval    |
-| Feature files       | One per sample          | One per marker per sample            |
-| attention_heatmaps  | Not needed              | Add section for advanced visualization|
-
-By following these steps and updating your configuration, you can enable and run multiplex analysis with Stamp.
-
----
 ## Generating Statistics
 
 After training and validating your model, you may want to generate statistics to evaluate its performance.
@@ -288,3 +261,24 @@ Afterwards, the `output_dir` should contain the following files:
     for the splits.
   - `roc-curve_isMSIH=yes.svg` and `pr-curve_isMSIH=yes.svg`
     contain the ROC and precision recall curves of the splits.
+
+## Attention Heatmaps for multiplex images
+
+If you want to plot the attention heatmaps, you need to additionally to known sections provide `marker_image_paths` which are the paths to the tiff files of the different marker channels. They are then automatically overlayed in `channel_order` with the same colormap as the attention heatmap. As `checkpoint_path`, provide a path to a model checkpoint from your crossvalidation step.
+
+```yaml
+attention_heatmaps:
+  output_dir: "/path/to/save/files/to"
+  channel_order: ["list", "of", "markers"]  # e.g. ["CD3", "CD8", "CD20", "DAPI"]
+
+  # Directory the extracted features are saved in.
+  feature_dir: "/path/your/extracted/features/are/stored/in"
+  wsi_dir: "/path/containing/whole/slide/images/to/extract/features/from"
+  marker_image_paths:: 
+  - "/path/to/CD3.tiff"
+  - "/path/to/CD8.tiff"
+  - ...
+  checkpoint_path: "/path/to/model.ckpt"
+```
+
+Happy coding!
