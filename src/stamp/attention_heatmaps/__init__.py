@@ -107,8 +107,9 @@ def visualize_marker_attention(
     plt.colorbar()
     plt.title("Aggregated Marker Attention (Top 10% Patches)")
     if channel_order:
-        plt.xticks(range(len(channel_order)), channel_order, rotation=90)
-        plt.yticks(range(len(channel_order)), channel_order)
+        modified_channel_order = [m.replace("antibody", "autofluorescence") for m in channel_order]
+        plt.xticks(range(len(channel_order)), modified_channel_order, rotation=90)
+        plt.yticks(range(len(channel_order)), modified_channel_order)
     plt.tight_layout()
     plt.savefig(output_path)
     plt.close()
