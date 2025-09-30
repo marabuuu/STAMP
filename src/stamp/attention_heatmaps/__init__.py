@@ -277,38 +277,52 @@ def attention_heatmap_(
     
     # 7. VISUALIZE SIDE-BY-SIDE: OVERLAY + HEATMAP
     fig = plt.figure(figsize=(20, 10))
-    gs = fig.add_gridspec(1, 3, width_ratios=[1.2, 1.2, 0.1])
-    axes = [fig.add_subplot(gs[0, 0]), fig.add_subplot(gs[0, 1])]
-    # Left: Multiplex image (match heatmap height)
-    axes[0].imshow(canvas, vmin=0, vmax=1, aspect='equal')  
-    axes[0].set_title("Multiplex image", fontsize=14)  
+    # Adjust width ratios: [multiplex image, heatmap, legend]
+    # Reduced the gap between heatmap and legend by adjusting ratios
+    gs = fig.add_gridspec(1, 3, width_ratios=[1.1, 1.1, 0.25])
+    axes = [
+        fig.add_subplot(gs[0, 0]),  # Multiplex image
+        fig.add_subplot(gs[0, 1]),  # Heatmap
+        fig.add_subplot(gs[0, 2])   # Legend container
+    ]
+
+    # Left: Multiplex image
+    axes[0].imshow(canvas, vmin=0, vmax=1, aspect='equal')
+    axes[0].set_title("Multiplex image", fontsize=14)
     axes[0].axis('off')
-    # Right: Attention heatmap
-    # Mask grid positions where grid == -1 (filtered tiles)
+
+    # Middle: Attention heatmap
     masked_grid = np.ma.masked_where(grid == -1, grid)
-    # Use tab20 colormap and set masked color to black
     cmap_heatmap = plt.get_cmap('tab20', len(channel_order)).with_extremes(bad='black')
-    # Flip the grid vertically to match the overlay orientation
-    im = axes[1].imshow(np.flipud(masked_grid), cmap=cmap_heatmap, vmin=0, vmax=len(channel_order)-1, aspect='equal')  
-    axes[1].set_title("Most Influential Marker per Tile", fontsize=14)  
+    im = axes[1].imshow(np.flipud(masked_grid), cmap=cmap_heatmap, vmin=0, vmax=len(channel_order)-1, aspect='equal')
+    axes[1].set_title("Most Influential Marker per Tile", fontsize=14)
     axes[1].axis('off')
 
-    # Create custom legend matching the heatmap
-    # Use marker order as in channel_order
+    # Right: Legend
+    axes[2].axis('off')  # Turn off axes for the legend container
+
+    # Create legend patches with correct ordering
     legend_patches = []
     for i, marker in enumerate(channel_order):
-        # Replace "antibody" with "autofluorescence" in the label
         display_name = marker.replace("antibody", "autofluorescence")
         cmap = plt.get_cmap('tab20')
         legend_patches.append(mpatches.Patch(color=cmap(i), label=display_name))
 
-    # Create legend
-    fig.legend(handles=legend_patches, loc='center right', bbox_to_anchor=(1.05, 0.5))
+    # Add legend to the third subplot
+    legend = axes[2].legend(
+        handles=legend_patches,
+        loc='center left',
+        frameon=False,
+        fontsize=10
+    )
+
+    # Adjust spacing between subfigures
+    # wspace controls the width space between subplots (0 = no space, 1 = maximum space)
+    plt.subplots_adjust(wspace=0.02)
 
     # Save the composite figure
-    composite_path = output_path / f"{slide_path.stem}_composite.png"  
-    plt.tight_layout()  
-    plt.savefig(composite_path, dpi=300, bbox_inches='tight')  
-    plt.close()  
-    print(f"\nSuccessfully saved composite visualization to: {composite_path}")  
+    composite_path = output_path / f"{slide_path.stem}_composite.png"
+    plt.savefig(composite_path, dpi=300, bbox_inches='tight')
+    plt.close()
+    print(f"\nSuccessfully saved composite visualization to: {composite_path}")
     return composite_path
