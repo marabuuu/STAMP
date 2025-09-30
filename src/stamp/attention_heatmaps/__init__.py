@@ -162,20 +162,21 @@ def attention_heatmap_(
     # --- Debug prints after model call ---
     print("[DEBUG] marker_attn:", type(marker_attn), getattr(marker_attn, 'shape', None))
     print("[DEBUG] patch_attn:", type(patch_attn), getattr(patch_attn, 'shape', None))
+
     # Remove batch dimension if present
     marker_attn = marker_attn.squeeze(0)
     if patch_attn is not None:
         patch_attn = patch_attn.squeeze(0)
-    # Aggregate marker attention (use patch_attn if available, else average all)
+    # Aggregate marker attention 
     avg_marker_attn = aggregate_marker_attention(marker_attn, patch_attn, top_k_percent)
-    # Save aggregate marker attention PNG (one per sample)
+    # Save aggregate marker attention PNG 
     slide_output_path = output_path / f"{slide_path.stem}_marker_attention.png"
     visualize_marker_attention(avg_marker_attn, slide_output_path, channel_order)
-    # Per-tile channel argmax heatmap (classic gapless heatmap layout)
+    # Per-tile channel argmax heatmap 
     marker_scores = marker_attn.sum(dim=1)  # [tiles, markers]
-    most_influential_marker = marker_scores.argmax(dim=1).cpu().numpy()  # [tiles]
+    most_influential_marker = marker_scores.argmax(dim=1).cpu().numpy()  
     # Reshape to 2D grid for classic heatmap
-    # Try to infer grid shape from coords (assume regular grid)
+    # Try to infer grid shape from coords 
     coords_np = coords_um.cpu().numpy() if torch.is_tensor(coords_um) else coords_um
     # Find unique x and y, sort them
     x_unique = np.unique(coords_np[:, 0])
@@ -209,7 +210,7 @@ def attention_heatmap_(
             marker_image_paths_ordered.append(match[0])
         else:
             print(f"  ✗ {marker} not found in provided images!")
-            # Create a blank image as placeholder (but skip for no_antibody)
+            # Create a blank image as placeholder 
             if marker != "no_antibody":  # Skip placeholder for no_antibody
                 with tifffile.TiffFile(marker_image_paths[0]) as tif:
                     h, w = tif.pages[0].shape[:2]
@@ -227,7 +228,7 @@ def attention_heatmap_(
     marker_imgs = []
     for img_path in marker_image_paths:
         img = tifffile.imread(str(img_path))
-        if img.ndim == 3:  # Handle RGB TIFFs (common in fluorescence)
+        if img.ndim == 3:  
             # Take first channel or convert to grayscale
             if img.shape[2] == 3:
                 img = img.mean(axis=2)
@@ -235,7 +236,7 @@ def attention_heatmap_(
                 img = img[:, :, 0]  # Use first channel for multi-channel TIFFs
         marker_imgs.append(img.astype(np.float32))
     
-    # 3. LOG NORMALIZATION (better dynamic range than linear)
+    # 3. LOG NORMALIZATION 
     norm_imgs = []
     for img in marker_imgs:
         # Log(1+x) compression handles high dynamic range better
@@ -248,12 +249,12 @@ def attention_heatmap_(
             img_norm = np.zeros_like(img_log)
         norm_imgs.append(img_norm)
     
-    # 4. MAX-INTENSITY PROJECTION (Napari-style)
+    # 4. MAX-INTENSITY PROJECTION 
     all_norm = np.stack(norm_imgs, axis=-1)  # [H, W, N_channels]
     max_index = np.argmax(all_norm, axis=-1)  # Dominant channel per pixel
     max_value = np.max(all_norm, axis=-1)     # Strength of dominant channel
     
-    # Apply threshold to suppress weak signals (optional but recommended)
+    # Apply threshold to suppress weak signals 
     threshold = np.percentile(max_value, 5)  # Top 95% of pixels
     max_value[max_value < threshold] = 0
     
@@ -267,7 +268,7 @@ def attention_heatmap_(
         mask = (max_index == i)
         canvas[mask] = colors[i] * max_value[mask, np.newaxis]
     
-    # 6. CREATE LEGEND FOR CHANNELS (with "antibody" -> "autofluorescence")
+    # 6. CREATE LEGEND FOR CHANNELS 
     legend_patches = []
     for i, marker in enumerate(channel_order):
         # Replace "antibody" with "autofluorescence" in the label
@@ -275,38 +276,39 @@ def attention_heatmap_(
         legend_patches.append(mpatches.Patch(color=colors[i], label=display_name))
     
     # 7. VISUALIZE SIDE-BY-SIDE: OVERLAY + HEATMAP
-    fig, axes = plt.subplots(1, 2, figsize=(18, 10), 
-                             gridspec_kw={'width_ratios': [1, 1.2]})
-
+    fig = plt.figure(figsize=(20, 10))
+    gs = fig.add_gridspec(1, 3, width_ratios=[1.2, 1.2, 0.1])
+    axes = [fig.add_subplot(gs[0, 0]), fig.add_subplot(gs[0, 1])]
     # Left: Multiplex image (match heatmap height)
-    axes[0].imshow(canvas, vmin=0, vmax=1, aspect='auto')
-    axes[0].set_title("Multiplex image", fontsize=14)
+    axes[0].imshow(canvas, vmin=0, vmax=1, aspect='equal')  
+    axes[0].set_title("Multiplex image", fontsize=14)  
     axes[0].axis('off')
-
-    # Remove custom legend from axes[1] (heatmap)
-    # Only use the colorbar for legend
-    
-    # Right: Attention heatmap (with corrected orientation)
+    # Right: Attention heatmap
     # Mask grid positions where grid == -1 (filtered tiles)
     masked_grid = np.ma.masked_where(grid == -1, grid)
     # Use tab20 colormap and set masked color to black
     cmap_heatmap = plt.get_cmap('tab20', len(channel_order)).with_extremes(bad='black')
     # Flip the grid vertically to match the overlay orientation
-    im = axes[1].imshow(np.flipud(masked_grid), cmap=cmap_heatmap, vmin=0, vmax=len(channel_order)-1)
-    axes[1].set_title("Most Influential Marker per Tile", fontsize=14)
+    im = axes[1].imshow(np.flipud(masked_grid), cmap=cmap_heatmap, vmin=0, vmax=len(channel_order)-1, aspect='equal')  
+    axes[1].set_title("Most Influential Marker per Tile", fontsize=14)  
     axes[1].axis('off')
 
-    # Create custom colorbar matching the heatmap (with correct ordering)
-    # Use marker order as in channel_order 
-    cbar = plt.colorbar(im, ax=axes[1], fraction=0.046, pad=0.04)
-    cbar.set_ticks(list(map(float, range(len(channel_order)))));
-    cbar.set_ticklabels([m.replace("antibody", "autofluorescence") for m in channel_order])
-    
+    # Create custom legend matching the heatmap
+    # Use marker order as in channel_order
+    legend_patches = []
+    for i, marker in enumerate(channel_order):
+        # Replace "antibody" with "autofluorescence" in the label
+        display_name = marker.replace("antibody", "autofluorescence")
+        cmap = plt.get_cmap('tab20')
+        legend_patches.append(mpatches.Patch(color=cmap(i), label=display_name))
+
+    # Create legend
+    fig.legend(handles=legend_patches, loc='center right', bbox_to_anchor=(1.05, 0.5))
+
     # Save the composite figure
-    composite_path = output_path / f"{slide_path.stem}_composite.png"
-    plt.tight_layout()
-    plt.savefig(composite_path, dpi=300, bbox_inches='tight')
-    plt.close()
-    
-    print(f"\nSuccessfully saved composite visualization to: {composite_path}")
+    composite_path = output_path / f"{slide_path.stem}_composite.png"  
+    plt.tight_layout()  
+    plt.savefig(composite_path, dpi=300, bbox_inches='tight')  
+    plt.close()  
+    print(f"\nSuccessfully saved composite visualization to: {composite_path}")  
     return composite_path
